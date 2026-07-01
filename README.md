@@ -3,7 +3,7 @@
 Run the middleware first on `http://localhost:4050`.
 
 ```sh
-cd /Users/ghalielouarzazi/code/nexus-work/intent-demo-app
+cd /intent-demo-app
 npm install
 npm run dev
 ```
