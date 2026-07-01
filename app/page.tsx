@@ -31,8 +31,6 @@ import {
   type SelectableToken,
 } from "../lib/intent-utils";
 
-type Mode = "easy" | "advanced";
-
 export default function Page() {
   const [deployment, setDeployment] = useState<DeploymentResponse | null>(null);
   const [form, setForm] = useState<IntentFormState | null>(null);
@@ -46,7 +44,7 @@ export default function Page() {
   const [rawVisible, setRawVisible] = useState(false);
   const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState(false);
-  const [mode, setMode] = useState<Mode>("easy");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,7 +55,7 @@ export default function Page() {
         if (cancelled) return;
         setDeployment(nextDeployment);
         setForm((current) => current ?? buildInitialIntentForm(nextDeployment));
-        setStatus(`Loaded ${nextDeployment.chains.length} chains`);
+        setStatus("Ready to quote intents");
       } catch (nextError) {
         if (!cancelled) {
           setError(readError(nextError));
@@ -74,8 +72,8 @@ export default function Page() {
 
   const effectiveForm = useMemo(() => {
     if (!deployment || !form) return null;
-    return buildEffectiveForm(deployment, form, mode);
-  }, [deployment, form, mode]);
+    return buildEffectiveForm(deployment, form, advancedOpen);
+  }, [deployment, form, advancedOpen]);
 
   const destinationTokens = useMemo(() => {
     if (!deployment || !form) return [];
@@ -129,16 +127,16 @@ export default function Page() {
     });
   }
 
-  function setEasyInput(patch: Partial<InputLeg>) {
+  function setSimpleInput(patch: Partial<InputLeg>) {
     if (!deployment || !form) return;
     const current = form.inputs[0] ?? defaultInputLeg(deployment, form.destinationChainId);
     patchForm({ inputs: [{ ...current, ...patch }, ...form.inputs.slice(1)] });
   }
 
-  function setEasyInputChain(chainId: number) {
+  function setSimpleInputChain(chainId: number) {
     if (!deployment) return;
     const token = getTokensForChain(deployment, chainId)[0];
-    setEasyInput({ chainId, token: token.address });
+    setSimpleInput({ chainId, token: token.address });
   }
 
   async function refreshBalances(account: Hex) {
@@ -262,6 +260,7 @@ export default function Page() {
   }
 
   const isExactInput = form.tradeType === "exactInput";
+  const showSimpleInput = isExactInput && !advancedOpen;
   const destinationChain = getChain(deployment, form.destinationChainId);
   const destinationToken = getToken(
     deployment,
@@ -297,16 +296,15 @@ export default function Page() {
             <div className="panelHeader">
               <div>
                 <span className="eyebrow">Route builder</span>
-                <h2>{mode === "easy" ? "Easy mode" : "Advanced mode"}</h2>
+                <h2>Build an intent</h2>
               </div>
-              <SegmentedControl
-                value={mode}
-                options={[
-                  ["easy", "Easy"],
-                  ["advanced", "Advanced"],
-                ]}
-                onChange={(value) => setMode(value as Mode)}
-              />
+              <button
+                type="button"
+                className="ghostButton"
+                onClick={() => setAdvancedOpen((current) => !current)}
+              >
+                {advancedOpen ? "Hide advanced" : "Advanced options"}
+              </button>
             </div>
 
             <SegmentedControl
@@ -321,19 +319,19 @@ export default function Page() {
             <div className="routeGrid">
               <div className="routeBlock">
                 <span className="label">{isExactInput ? "You send" : "Source"}</span>
-                {isExactInput && sourceLeg && inputChain && inputToken ? (
+                {showSimpleInput && sourceLeg && inputChain && inputToken ? (
                   <>
                     <input
                       className="amountInput"
                       inputMode="decimal"
                       value={sourceLeg.amount}
-                      onChange={(event) => setEasyInput({ amount: event.target.value })}
+                      onChange={(event) => setSimpleInput({ amount: event.target.value })}
                     />
                     <SelectionSummary chain={inputChain} token={inputToken} />
                     <div className="selectRow">
                       <select
                         value={sourceLeg.chainId}
-                        onChange={(event) => setEasyInputChain(Number(event.target.value))}
+                        onChange={(event) => setSimpleInputChain(Number(event.target.value))}
                       >
                         {deployment.chains.map((chain) => (
                           <option key={chain.chainId} value={chain.chainId}>
@@ -343,7 +341,7 @@ export default function Page() {
                       </select>
                       <select
                         value={sourceLeg.token}
-                        onChange={(event) => setEasyInput({ token: event.target.value as Hex })}
+                        onChange={(event) => setSimpleInput({ token: event.target.value as Hex })}
                       >
                         {sourceTokens.map((token) => (
                           <option key={token.address} value={token.address}>
@@ -353,6 +351,8 @@ export default function Page() {
                       </select>
                     </div>
                   </>
+                ) : isExactInput ? (
+                  <InputSummary deployment={deployment} inputs={effectiveForm.inputs} />
                 ) : (
                   <>
                     <div className="autoRoute">
@@ -360,18 +360,13 @@ export default function Page() {
                       <div>
                         <strong>Auto liquidity</strong>
                         <span>
-                          {mode === "easy"
-                            ? "Middleware chooses eligible balances"
-                            : form.sources.length
-                              ? `${form.sources.length} preferred source set`
-                              : "No source preference"}
+                          {advancedOpen && form.sources.length
+                            ? `${form.sources.length} preferred source set`
+                            : "Middleware chooses eligible balances"}
                         </span>
                       </div>
                     </div>
-                    <p className="hint">
-                      Use Advanced mode to choose source chains, tokens, gas drop, provider,
-                      and slippage.
-                    </p>
+                    <p className="hint">Open advanced options to choose source chains and tokens.</p>
                   </>
                 )}
               </div>
@@ -464,14 +459,29 @@ export default function Page() {
             {rawVisible ? <pre className="raw">{requestPreview}</pre> : null}
           </div>
 
-          {mode === "advanced" ? (
-            <div className="panel">
+          <div className={`panel advancedPanel ${advancedOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="advancedToggle"
+              onClick={() => setAdvancedOpen((current) => !current)}
+              aria-expanded={advancedOpen}
+            >
+              <span>
+                <span className="eyebrow">Advanced options</span>
+                <strong>Provider, slippage, gas drop, and routing preferences</strong>
+              </span>
+              <span>{advancedOpen ? "−" : "+"}</span>
+            </button>
+            {advancedOpen ? (
               <div className="panelHeader">
                 <div>
-                  <span className="eyebrow">Advanced request controls</span>
-                  <h2>Provider, slippage, gas drop, and sources</h2>
+                  <span className="eyebrow">Request controls</span>
+                  <h2>{isExactInput ? "Exact-in inputs" : "Exact-out sources"}</h2>
                 </div>
               </div>
+            ) : null}
+            {advancedOpen ? (
+              <>
               <div className="formGrid">
                 <label className="field">
                   <span className="label">Provider</span>
@@ -526,11 +536,10 @@ export default function Page() {
                   </>
                 )}
               </div>
-            </div>
-          ) : null}
-        </section>
+              </>
+            ) : null}
+          </div>
 
-        <aside className="sideStack">
           <QuotePanel
             quote={quote}
             deployment={deployment}
@@ -550,6 +559,9 @@ export default function Page() {
             intentStatus={intentStatus}
             logs={logs}
           />
+        </section>
+
+        <aside className="sideStack">
           <BalanceList deployment={deployment} balances={balances} />
         </aside>
       </div>
@@ -620,6 +632,49 @@ function SelectionSummary({
       <div>
         <strong>{token.symbol}</strong>
         <span>{token.native ? "Native token" : shortAddress(token.address)}</span>
+      </div>
+    </div>
+  );
+}
+
+function InputSummary({
+  deployment,
+  inputs,
+}: {
+  deployment: DeploymentResponse;
+  inputs: InputLeg[];
+}) {
+  if (inputs.length === 0) {
+    return <div className="emptyState">No input selected.</div>;
+  }
+
+  if (inputs.length === 1) {
+    const input = inputs[0];
+    const chain = getChain(deployment, input.chainId);
+    const token = getToken(deployment, input.chainId, input.token);
+    return (
+      <>
+        <div className="amountDisplay">{input.amount || "0"}</div>
+        <SelectionSummary chain={chain} token={token} />
+        <p className="hint">Edit this input in Advanced options.</p>
+      </>
+    );
+  }
+
+  return (
+    <div className="inputSummary">
+      <strong>{inputs.length} input legs</strong>
+      <span>Advanced options define the exact-in request below.</span>
+      <div className="inputChipList">
+        {inputs.map((input, index) => {
+          const chain = getChain(deployment, input.chainId);
+          const token = getToken(deployment, input.chainId, input.token);
+          return (
+            <span className="inputChip" key={`${input.chainId}-${input.token}-${index}`}>
+              {input.amount || "0"} {token.symbol} on {chain.name}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
@@ -896,9 +951,9 @@ function Logo({ src, label }: { src?: string; label: string }) {
 function buildEffectiveForm(
   deployment: DeploymentResponse,
   form: IntentFormState,
-  mode: Mode,
+  advancedOpen: boolean,
 ): IntentFormState {
-  if (mode === "advanced") return form;
+  if (advancedOpen) return form;
   return {
     ...form,
     provider: "auto",

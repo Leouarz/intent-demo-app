@@ -300,7 +300,8 @@ code {
   background: linear-gradient(180deg, #ffffff, var(--accent-soft));
 }
 
-.amountInput {
+.amountInput,
+.amountDisplay {
   min-height: 58px;
   border: 0;
   background: transparent;
@@ -311,6 +312,11 @@ code {
 
 .amountInput:focus {
   outline-offset: 6px;
+}
+
+.amountDisplay {
+  display: flex;
+  align-items: center;
 }
 
 .selectRow {
@@ -419,10 +425,86 @@ code {
   justify-content: flex-start;
 }
 
+.ghostButton {
+  background: var(--panel-soft);
+}
+
+.sideStack {
+  position: sticky;
+  top: 18px;
+}
+
+.advancedPanel {
+  display: grid;
+  gap: 16px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.advancedPanel.open {
+  padding: 18px;
+}
+
+.advancedToggle {
+  display: flex;
+  width: 100%;
+  min-height: 62px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 0;
+  background: transparent;
+  padding: 16px 18px;
+  text-align: left;
+}
+
+.advancedPanel.open .advancedToggle {
+  margin: -18px -18px 0;
+  width: calc(100% + 36px);
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel-soft);
+}
+
+.advancedToggle > span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
 .advancedBlock {
   display: grid;
   gap: 12px;
   margin-top: 18px;
+}
+
+.inputSummary {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.inputSummary > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.inputChipList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.inputChip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  padding: 6px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .sourceCard {
@@ -624,6 +706,10 @@ code {
   .appGrid,
   .routeGrid {
     grid-template-columns: 1fr;
+  }
+
+  .sideStack {
+    position: static;
   }
 
   .walletButton {
