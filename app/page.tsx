@@ -36,8 +36,12 @@ export default function Page() {
   const [form, setForm] = useState<IntentFormState | null>(null);
   const [balances, setBalances] = useState<BalancesByChain | null>(null);
   const [quote, setQuote] = useState<IntentQuote | null>(null);
-  const [submitResult, setSubmitResult] = useState<IntentSubmitResponse | null>(null);
-  const [intentStatus, setIntentStatus] = useState<IntentStatusResponse | null>(null);
+  const [submitResult, setSubmitResult] = useState<IntentSubmitResponse | null>(
+    null,
+  );
+  const [intentStatus, setIntentStatus] = useState<IntentStatusResponse | null>(
+    null,
+  );
   const [status, setStatus] = useState("Loading intent catalog");
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -89,7 +93,11 @@ export default function Page() {
   const requestPreview = useMemo(() => {
     if (!deployment || !effectiveForm) return "";
     try {
-      return JSON.stringify(buildIntentQuoteRequest(deployment, effectiveForm), null, 2);
+      return JSON.stringify(
+        buildIntentQuoteRequest(deployment, effectiveForm),
+        null,
+        2,
+      );
     } catch (nextError) {
       return readError(nextError);
     }
@@ -129,7 +137,8 @@ export default function Page() {
 
   function setSimpleInput(patch: Partial<InputLeg>) {
     if (!deployment || !form) return;
-    const current = form.inputs[0] ?? defaultInputLeg(deployment, form.destinationChainId);
+    const current =
+      form.inputs[0] ?? defaultInputLeg(deployment, form.destinationChainId);
     patchForm({ inputs: [{ ...current, ...patch }, ...form.inputs.slice(1)] });
   }
 
@@ -250,7 +259,7 @@ export default function Page() {
         <section className="heroShell">
           <div className="brandMark">N</div>
           <div>
-            <h1>Intent Bridge</h1>
+            <h1>Intent Bridge + Swap</h1>
             <p>{MIDDLEWARE_URL}</p>
           </div>
         </section>
@@ -268,7 +277,9 @@ export default function Page() {
     form.destinationTokenAddress,
   );
   const inputChain = sourceLeg ? getChain(deployment, sourceLeg.chainId) : null;
-  const inputToken = sourceLeg ? getToken(deployment, sourceLeg.chainId, sourceLeg.token) : null;
+  const inputToken = sourceLeg
+    ? getToken(deployment, sourceLeg.chainId, sourceLeg.token)
+    : null;
   const canQuote = Boolean(effectiveForm.sender && !busy);
 
   return (
@@ -277,13 +288,18 @@ export default function Page() {
         <div className="brandMark">N</div>
         <div className="heroCopy">
           <span className="eyebrow">Middleware intent demo</span>
-          <h1>Intent Bridge</h1>
+          <h1>Intent Bridge + Swap</h1>
           <p>
-            Quote, sign, submit, and inspect intent routes against{" "}
-            <code>{MIDDLEWARE_URL}</code>.
+            Quote, sign, submit, and inspect bridge or cross-chain swap intent
+            routes against <code>{MIDDLEWARE_URL}</code>.
           </p>
         </div>
-        <button type="button" className="walletButton" onClick={connectWallet} disabled={busy}>
+        <button
+          type="button"
+          className="walletButton"
+          onClick={connectWallet}
+          disabled={busy}
+        >
           {form.sender ? shortAddress(form.sender) : "Connect wallet"}
         </button>
       </section>
@@ -313,25 +329,33 @@ export default function Page() {
                 ["exactOutput", "Exact out"],
                 ["exactInput", "Exact in"],
               ]}
-              onChange={(value) => setTradeType(value as IntentFormState["tradeType"])}
+              onChange={(value) =>
+                setTradeType(value as IntentFormState["tradeType"])
+              }
             />
 
             <div className="routeGrid">
               <div className="routeBlock">
-                <span className="label">{isExactInput ? "You send" : "Source"}</span>
+                <span className="label">
+                  {isExactInput ? "You send" : "Source"}
+                </span>
                 {showSimpleInput && sourceLeg && inputChain && inputToken ? (
                   <>
                     <input
                       className="amountInput"
                       inputMode="decimal"
                       value={sourceLeg.amount}
-                      onChange={(event) => setSimpleInput({ amount: event.target.value })}
+                      onChange={(event) =>
+                        setSimpleInput({ amount: event.target.value })
+                      }
                     />
                     <SelectionSummary chain={inputChain} token={inputToken} />
                     <div className="selectRow">
                       <select
                         value={sourceLeg.chainId}
-                        onChange={(event) => setSimpleInputChain(Number(event.target.value))}
+                        onChange={(event) =>
+                          setSimpleInputChain(Number(event.target.value))
+                        }
                       >
                         {deployment.chains.map((chain) => (
                           <option key={chain.chainId} value={chain.chainId}>
@@ -341,7 +365,9 @@ export default function Page() {
                       </select>
                       <select
                         value={sourceLeg.token}
-                        onChange={(event) => setSimpleInput({ token: event.target.value as Hex })}
+                        onChange={(event) =>
+                          setSimpleInput({ token: event.target.value as Hex })
+                        }
                       >
                         {sourceTokens.map((token) => (
                           <option key={token.address} value={token.address}>
@@ -352,7 +378,10 @@ export default function Page() {
                     </div>
                   </>
                 ) : isExactInput ? (
-                  <InputSummary deployment={deployment} inputs={effectiveForm.inputs} />
+                  <InputSummary
+                    deployment={deployment}
+                    inputs={effectiveForm.inputs}
+                  />
                 ) : (
                   <>
                     <div className="autoRoute">
@@ -362,11 +391,14 @@ export default function Page() {
                         <span>
                           {advancedOpen && form.sources.length
                             ? `${form.sources.length} preferred source set`
-                            : "Middleware chooses eligible balances"}
+                            : "Best eligible provider across available balances"}
                         </span>
                       </div>
                     </div>
-                    <p className="hint">Open advanced options to choose source chains and tokens.</p>
+                    <p className="hint">
+                      Open advanced options to choose ordered source chains and
+                      tokens. Leave it empty to use all eligible balances.
+                    </p>
                   </>
                 )}
               </div>
@@ -374,7 +406,9 @@ export default function Page() {
               <div className="routeArrow">↓</div>
 
               <div className="routeBlock destinationBlock">
-                <span className="label">{isExactInput ? "You receive" : "Destination"}</span>
+                <span className="label">
+                  {isExactInput ? "You receive" : "Destination"}
+                </span>
                 <input
                   className="amountInput"
                   inputMode="decimal"
@@ -392,13 +426,20 @@ export default function Page() {
                   }
                   placeholder={isExactInput ? "Quoted output" : "0.0"}
                   disabled={isExactInput}
-                  onChange={(event) => patchForm({ outputAmount: event.target.value })}
+                  onChange={(event) =>
+                    patchForm({ outputAmount: event.target.value })
+                  }
                 />
-                <SelectionSummary chain={destinationChain} token={destinationToken} />
+                <SelectionSummary
+                  chain={destinationChain}
+                  token={destinationToken}
+                />
                 <div className="selectRow">
                   <select
                     value={form.destinationChainId}
-                    onChange={(event) => setDestinationChain(Number(event.target.value))}
+                    onChange={(event) =>
+                      setDestinationChain(Number(event.target.value))
+                    }
                   >
                     {deployment.chains.map((chain) => (
                       <option key={chain.chainId} value={chain.chainId}>
@@ -409,7 +450,9 @@ export default function Page() {
                   <select
                     value={form.destinationTokenAddress}
                     onChange={(event) =>
-                      patchForm({ destinationTokenAddress: event.target.value as Hex })
+                      patchForm({
+                        destinationTokenAddress: event.target.value as Hex,
+                      })
                     }
                   >
                     {destinationTokens.map((token) => (
@@ -439,19 +482,29 @@ export default function Page() {
                 <input
                   value={form.recipient}
                   placeholder="0x..."
-                  onChange={(event) => patchForm({ recipient: event.target.value })}
+                  onChange={(event) =>
+                    patchForm({ recipient: event.target.value })
+                  }
                 />
               </label>
             </div>
 
             <div className="actions">
-              <button type="button" className="primary" onClick={fetchQuote} disabled={!canQuote}>
+              <button
+                type="button"
+                className="primary"
+                onClick={fetchQuote}
+                disabled={!canQuote}
+              >
                 {busy ? "Working..." : "Get quote"}
               </button>
               <button type="button" onClick={logRequest}>
                 Log request
               </button>
-              <button type="button" onClick={() => setRawVisible((current) => !current)}>
+              <button
+                type="button"
+                onClick={() => setRawVisible((current) => !current)}
+              >
                 {rawVisible ? "Hide payload" : "Show payload"}
               </button>
             </div>
@@ -468,7 +521,9 @@ export default function Page() {
             >
               <span>
                 <span className="eyebrow">Advanced options</span>
-                <strong>Provider, slippage, gas drop, and routing preferences</strong>
+                <strong>
+                  Provider, slippage, gas drop, and routing preferences
+                </strong>
               </span>
               <span>{advancedOpen ? "−" : "+"}</span>
             </button>
@@ -476,66 +531,77 @@ export default function Page() {
               <div className="panelHeader">
                 <div>
                   <span className="eyebrow">Request controls</span>
-                  <h2>{isExactInput ? "Exact-in inputs" : "Exact-out sources"}</h2>
+                  <h2>
+                    {isExactInput ? "Exact-in inputs" : "Exact-out sources"}
+                  </h2>
                 </div>
               </div>
             ) : null}
             {advancedOpen ? (
               <>
-              <div className="formGrid">
-                <label className="field">
-                  <span className="label">Provider</span>
-                  <select
-                    value={form.provider}
-                    onChange={(event) =>
-                      patchForm({ provider: event.target.value as IntentFormState["provider"] })
-                    }
-                  >
-                    <option value="auto">Auto (best)</option>
-                    <option value="nexus-v2">nexus-v2</option>
-                    <option value="mayan">mayan</option>
-                  </select>
-                </label>
-                <label className="field">
-                  <span className="label">Slippage bps</span>
-                  <input
-                    inputMode="numeric"
-                    value={form.slippageBps}
-                    placeholder="300 or auto"
-                    onChange={(event) => patchForm({ slippageBps: event.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span className="label">Gas drop ({destinationChain.nativeCurrency.symbol})</span>
-                  <input
-                    inputMode="decimal"
-                    value={form.gasDropAmount}
-                    onChange={(event) => patchForm({ gasDropAmount: event.target.value })}
-                  />
-                </label>
-              </div>
+                <div className="formGrid">
+                  <label className="field">
+                    <span className="label">Provider</span>
+                    <select
+                      value={form.provider}
+                      onChange={(event) =>
+                        patchForm({
+                          provider: event.target
+                            .value as IntentFormState["provider"],
+                        })
+                      }
+                    >
+                      <option value="auto">Auto (best eligible)</option>
+                      <option value="nexus-v2">nexus-v2</option>
+                      <option value="mayan">mayan</option>
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span className="label">Slippage bps</span>
+                    <input
+                      inputMode="numeric"
+                      value={form.slippageBps}
+                      placeholder="300 or auto"
+                      onChange={(event) =>
+                        patchForm({ slippageBps: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="label">
+                      Gas drop ({destinationChain.nativeCurrency.symbol})
+                    </span>
+                    <input
+                      inputMode="decimal"
+                      value={form.gasDropAmount}
+                      onChange={(event) =>
+                        patchForm({ gasDropAmount: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
 
-              <div className="advancedBlock">
-                {isExactInput ? (
-                  <>
-                    <h3>Inputs (exactInput)</h3>
-                    <InputsEditor
-                      deployment={deployment}
-                      value={form.inputs}
-                      onChange={(inputs) => patchForm({ inputs })}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <h3>Sources (optional, exactOutput)</h3>
-                    <SourceSelector
-                      deployment={deployment}
-                      value={form.sources}
-                      onChange={(sources) => patchForm({ sources })}
-                    />
-                  </>
-                )}
-              </div>
+                <div className="advancedBlock">
+                  {isExactInput ? (
+                    <>
+                      <h3>Inputs (exactInput)</h3>
+                      <InputsEditor
+                        deployment={deployment}
+                        value={form.inputs}
+                        onChange={(inputs) => patchForm({ inputs })}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <h3>Sources (optional, exactOutput)</h3>
+                      <SourceSelector
+                        deployment={deployment}
+                        value={form.sources}
+                        onChange={(sources) => patchForm({ sources })}
+                      />
+                    </>
+                  )}
+                </div>
               </>
             ) : null}
           </div>
@@ -631,7 +697,9 @@ function SelectionSummary({
       <Logo src={token.logo} label={token.symbol} />
       <div>
         <strong>{token.symbol}</strong>
-        <span>{token.native ? "Native token" : shortAddress(token.address)}</span>
+        <span>
+          {token.native ? "Native token" : shortAddress(token.address)}
+        </span>
       </div>
     </div>
   );
@@ -670,7 +738,10 @@ function InputSummary({
           const chain = getChain(deployment, input.chainId);
           const token = getToken(deployment, input.chainId, input.token);
           return (
-            <span className="inputChip" key={`${input.chainId}-${input.token}-${index}`}>
+            <span
+              className="inputChip"
+              key={`${input.chainId}-${input.token}-${index}`}
+            >
               {input.amount || "0"} {token.symbol} on {chain.name}
             </span>
           );
@@ -699,7 +770,9 @@ function QuotePanel({
     return (
       <div className="panel">
         <span className="eyebrow">Quote</span>
-        <div className="emptyState">No quote yet. Build a route and request pricing.</div>
+        <div className="emptyState">
+          No quote yet. Build a route and request pricing.
+        </div>
       </div>
     );
   }
@@ -716,11 +789,25 @@ function QuotePanel({
       <dl className="quoteList">
         <div>
           <dt>Output</dt>
-          <dd>{formatQuoteAmount(deployment, quote.output.chainId, quote.output.tokenAddress, quote.output.amount)}</dd>
+          <dd>
+            {formatQuoteAmount(
+              deployment,
+              quote.output.chainId,
+              quote.output.tokenAddress,
+              quote.output.amount,
+            )}
+          </dd>
         </div>
         <div>
           <dt>Min received</dt>
-          <dd>{formatQuoteAmount(deployment, quote.output.chainId, quote.output.tokenAddress, quote.minAmountOut)}</dd>
+          <dd>
+            {formatQuoteAmount(
+              deployment,
+              quote.output.chainId,
+              quote.output.tokenAddress,
+              quote.minAmountOut,
+            )}
+          </dd>
         </div>
         <div>
           <dt>Input legs</dt>
@@ -741,12 +828,44 @@ function QuotePanel({
           </dd>
         </div>
       </dl>
+      <div className="quoteInputs">
+        {quote.input.map((input, index) => (
+          <div
+            className="quoteInputRow"
+            key={`${input.chainId}-${input.tokenAddress}-${index}`}
+          >
+            <span className="pill">Input {index + 1}</span>
+            <strong>
+              {formatQuoteAmount(
+                deployment,
+                input.chainId,
+                input.tokenAddress,
+                input.amount,
+              )}
+            </strong>
+            <span>
+              Total with fee:{" "}
+              {formatQuoteAmount(
+                deployment,
+                input.chainId,
+                input.tokenAddress,
+                input.totalRequired,
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
       <span className="hashText">{quote.quoteId}</span>
       <div className="actions">
         <button type="button" onClick={onLog}>
           Log quote
         </button>
-        <button type="button" className="primary" onClick={onRun} disabled={busy}>
+        <button
+          type="button"
+          className="primary"
+          onClick={onRun}
+          disabled={busy}
+        >
           {polling ? "Polling status" : "Run full flow"}
         </button>
       </div>
@@ -796,7 +915,9 @@ function StatusPanel({
           ))}
         </ul>
       ) : (
-        <div className="emptyState">Logs will appear here while you quote and execute.</div>
+        <div className="emptyState">
+          Logs will appear here while you quote and execute.
+        </div>
       )}
     </div>
   );
@@ -816,7 +937,11 @@ function InputsEditor({
   }
 
   function updateLeg(index: number, patch: Partial<InputLeg>) {
-    onChange(value.map((leg, legIndex) => (legIndex === index ? { ...leg, ...patch } : leg)));
+    onChange(
+      value.map((leg, legIndex) =>
+        legIndex === index ? { ...leg, ...patch } : leg,
+      ),
+    );
   }
 
   function removeLeg(index: number) {
@@ -837,7 +962,11 @@ function InputsEditor({
           <div className="sourceCard" key={`${leg.chainId}-${index}`}>
             <div className="sourceHeader">
               <SelectionSummary chain={chain} token={token} />
-              <button type="button" className="danger" onClick={() => removeLeg(index)}>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => removeLeg(index)}
+              >
                 Remove
               </button>
             </div>
@@ -863,11 +992,14 @@ function InputsEditor({
                 <span className="label">Token</span>
                 <select
                   value={leg.token}
-                  onChange={(event) => updateLeg(index, { token: event.target.value as Hex })}
+                  onChange={(event) =>
+                    updateLeg(index, { token: event.target.value as Hex })
+                  }
                 >
                   {tokens.map((nextToken) => (
                     <option key={nextToken.address} value={nextToken.address}>
-                      {nextToken.symbol} · {nextToken.native ? "native" : nextToken.address}
+                      {nextToken.symbol} ·{" "}
+                      {nextToken.native ? "native" : nextToken.address}
                     </option>
                   ))}
                 </select>
@@ -877,7 +1009,9 @@ function InputsEditor({
                 <input
                   inputMode="decimal"
                   value={leg.amount}
-                  onChange={(event) => updateLeg(index, { amount: event.target.value })}
+                  onChange={(event) =>
+                    updateLeg(index, { amount: event.target.value })
+                  }
                 />
               </label>
             </div>
@@ -903,7 +1037,9 @@ function BalanceList({
     <div className="panel">
       <span className="eyebrow">Balances</span>
       {!balances ? (
-        <div className="emptyState">Connect a wallet or request a quote to load balances.</div>
+        <div className="emptyState">
+          Connect a wallet or request a quote to load balances.
+        </div>
       ) : (
         <div className="balanceList">
           {deployment.chains.map((chain) => {
@@ -916,14 +1052,23 @@ function BalanceList({
                   <span>${chainBalance?.total_usd ?? "0"}</span>
                 </div>
                 {chainBalance?.errored ? (
-                  <span className="errorText">Balance fetch failed for this chain.</span>
+                  <span className="errorText">
+                    Balance fetch failed for this chain.
+                  </span>
                 ) : null}
                 {chainBalance?.currencies?.length ? (
                   chainBalance.currencies.map((currency) => (
-                    <div className="balanceToken" key={`${chain.chainId}-${currency.token_address}`}>
+                    <div
+                      className="balanceToken"
+                      key={`${chain.chainId}-${currency.token_address}`}
+                    >
                       <Logo src={currency.logo} label={currency.symbol} />
                       <span>
-                        {currency.symbol}: {formatBalanceAmount(currency.balance, currency.decimals)}
+                        {currency.symbol}:{" "}
+                        {formatBalanceAmount(
+                          currency.balance,
+                          currency.decimals,
+                        )}
                       </span>
                       <small>${currency.value}</small>
                     </div>
@@ -943,9 +1088,13 @@ function BalanceList({
 function Logo({ src, label }: { src?: string; label: string }) {
   const [failed, setFailed] = useState(false);
   if (!src || failed) {
-    return <span className="logoFallback">{label.slice(0, 1).toUpperCase()}</span>;
+    return (
+      <span className="logoFallback">{label.slice(0, 1).toUpperCase()}</span>
+    );
   }
-  return <img className="logo" src={src} alt="" onError={() => setFailed(true)} />;
+  return (
+    <img className="logo" src={src} alt="" onError={() => setFailed(true)} />
+  );
 }
 
 function buildEffectiveForm(
@@ -962,15 +1111,21 @@ function buildEffectiveForm(
     sources: [],
     inputs:
       form.tradeType === "exactInput"
-        ? [form.inputs[0] ?? defaultInputLeg(deployment, form.destinationChainId)]
+        ? [
+            form.inputs[0] ??
+              defaultInputLeg(deployment, form.destinationChainId),
+          ]
         : [],
   };
 }
 
-function defaultInputLeg(deployment: DeploymentResponse, preferredChainId?: number): InputLeg {
-  const chain = preferredChainId
-    ? getChain(deployment, preferredChainId)
-    : deployment.chains[0];
+function defaultInputLeg(
+  deployment: DeploymentResponse,
+  destinationChainId?: number,
+): InputLeg {
+  const chain =
+    deployment.chains.find((item) => item.chainId !== destinationChainId) ??
+    deployment.chains[0];
   if (!chain) {
     throw new Error("Deployment has no configured chains");
   }
@@ -994,11 +1149,15 @@ function formatQuoteAmount(
 }
 
 function shortAddress(value: string) {
-  return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+  return value.length > 12
+    ? `${value.slice(0, 6)}...${value.slice(-4)}`
+    : value;
 }
 
 function shortHash(value: string) {
-  return value.length > 14 ? `${value.slice(0, 8)}...${value.slice(-6)}` : value;
+  return value.length > 14
+    ? `${value.slice(0, 8)}...${value.slice(-6)}`
+    : value;
 }
 
 function readError(error: unknown) {

@@ -588,6 +588,33 @@ code {
   font-weight: 650;
 }
 
+.quoteInputs {
+  display: grid;
+  gap: 8px;
+}
+
+.quoteInputRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 10px;
+}
+
+.quoteInputRow strong,
+.quoteInputRow span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quoteInputRow > span:last-child {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .hashText {
   overflow-wrap: anywhere;
   border: 1px solid var(--line);
