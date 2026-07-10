@@ -36,6 +36,7 @@ type IntentTokenGroup = {
       currencyId?: number;
       coingeckoId?: string;
       mayanEnabled?: boolean;
+      sourceKind?: "bridge" | "swap";
       logo?: string;
     }
   >;
@@ -178,6 +179,8 @@ function buildTokensByChain(
         address: token.address,
         decimals: token.decimals,
         logo: token.logo,
+        sourceKind: token.sourceKind ?? "bridge",
+        mayanEnabled: token.mayanEnabled,
       });
       byChain.set(chainId, tokens);
     }

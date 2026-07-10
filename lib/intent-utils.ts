@@ -14,6 +14,8 @@ export type { Hex } from "viem";
 export const DEFAULT_SLIPPAGE_BPS_MAX = 300;
 export const ZERO_ADDRESS =
   "0x0000000000000000000000000000000000000000" as const;
+const TRANSACTION_RECEIPT_POLL_INTERVAL_MS = 1_500;
+const TRANSACTION_RECEIPT_TIMEOUT_MS = 180_000;
 
 export type DeploymentToken = {
   symbol: string;
@@ -21,6 +23,8 @@ export type DeploymentToken = {
   address: string;
   decimals: number;
   logo?: string;
+  sourceKind?: "bridge" | "swap";
+  mayanEnabled?: boolean;
 };
 
 export type DeploymentChain = {
@@ -51,6 +55,8 @@ export type SelectableToken = {
   decimals: number;
   logo?: string;
   native: boolean;
+  sourceKind: "bridge" | "swap";
+  mayanEnabled?: boolean;
 };
 
 export type ChainBalance = {
@@ -222,6 +228,11 @@ type EthereumProvider = {
   }): Promise<T>;
 };
 
+type TransactionReceipt = {
+  blockNumber: Hex;
+  status: "0x0" | "0x1";
+};
+
 // Returns the injected browser wallet provider used by MetaMask and compatible wallets.
 export function getInjectedProvider(): EthereumProvider {
   const provider = (
@@ -280,12 +291,15 @@ export function getChain(
   return chain;
 }
 
-// Lists the selectable native and configured bridge tokens for a chain.
+// Lists the selectable native token and Mayan-enabled configured tokens for a chain.
 export function getTokensForChain(
   deployment: DeploymentResponse,
   chainId: number,
 ): SelectableToken[] {
   const chain = getChain(deployment, chainId);
+  const mayanEnabledTokens = chain.tokens.filter(
+    (token) => token.mayanEnabled === true,
+  );
   return [
     {
       chainId: chain.chainId,
@@ -295,8 +309,9 @@ export function getTokensForChain(
       decimals: chain.nativeCurrency.decimals,
       logo: chain.nativeCurrency.logo,
       native: true,
+      sourceKind: "bridge",
     },
-    ...chain.tokens.map((token) => ({
+    ...mayanEnabledTokens.map((token) => ({
       chainId: chain.chainId,
       symbol: token.symbol,
       name: token.name,
@@ -304,6 +319,8 @@ export function getTokensForChain(
       decimals: token.decimals,
       logo: token.logo,
       native: false,
+      sourceKind: token.sourceKind ?? "bridge",
+      mayanEnabled: token.mayanEnabled,
     })),
   ];
 }
@@ -336,6 +353,42 @@ export function formatBalanceAmount(balance: string, decimals: number): string {
     .replace(/0+$/, "")
     .slice(0, 6);
   return `${whole}.${trimmed}`;
+}
+
+// Flags exactInput legs whose amount exceeds the sender's on-chain balance. A quote is pure price
+// discovery (the middleware never checks balances, so you can preview routes without funds), so this
+// returns non-blocking warnings rather than throwing — the shortfall only actually bites at deposit.
+export function findInsufficientInputs(
+  deployment: DeploymentResponse,
+  form: IntentFormState,
+  balances: BalancesByChain,
+): string[] {
+  if (form.tradeType !== "exactInput") return [];
+  const warnings: string[] = [];
+  form.inputs.forEach((leg) => {
+    let required: bigint;
+    try {
+      const token = getToken(deployment, leg.chainId, leg.token);
+      required = parseUnits(leg.amount.trim() || "0", token.decimals);
+      const currency = balances[String(leg.chainId)]?.currencies.find(
+        (item) =>
+          item.token_address.toLowerCase() === token.address.toLowerCase(),
+      );
+      const available = currency ? BigInt(currency.balance) : 0n;
+      if (required > available) {
+        const chain = getChain(deployment, leg.chainId);
+        warnings.push(
+          `You send ${formatBalanceAmount(required.toString(), token.decimals)} ${token.symbol} ` +
+            `on ${chain.name} but only hold ` +
+            `${formatBalanceAmount(available.toString(), token.decimals)} — the quote is valid, ` +
+            `but the deposit will fail unless you fund the wallet.`,
+        );
+      }
+    } catch {
+      // Ignore legs we cannot parse; buildIntentQuoteRequest surfaces those errors.
+    }
+  });
+  return warnings;
 }
 
 // Builds the middleware quote request from deployment metadata and form state.
@@ -499,6 +552,8 @@ export async function approveAllowances(
         },
       ],
     });
+    log(`Approval submitted: ${hash}`);
+    await waitForSuccessfulTransactionReceipt(provider, hash, log);
     sent.push({ ...allowance, hash });
   }
   return sent;
@@ -548,6 +603,8 @@ export async function sendNativeTransactions(
         },
       ],
     });
+    log(`Native deposit submitted: ${hash}`);
+    await waitForSuccessfulTransactionReceipt(provider, hash, log);
     sent.push({
       chainId: nativeTx.chainId,
       sourceIndex: nativeTx.sourceIndex,
@@ -555,6 +612,33 @@ export async function sendNativeTransactions(
     });
   }
   return sent;
+}
+
+// Waits for the transaction to be included successfully, including transactions submitted through
+// a private/MEV route that may not be visible through public RPC while pending.
+async function waitForSuccessfulTransactionReceipt(
+  provider: EthereumProvider,
+  hash: Hex,
+  log: (message: string) => void,
+): Promise<void> {
+  const deadline = Date.now() + TRANSACTION_RECEIPT_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    const receipt = await provider.request<TransactionReceipt | null>({
+      method: "eth_getTransactionReceipt",
+      params: [hash],
+    });
+    if (receipt) {
+      if (receipt.status !== "0x1") {
+        throw new Error(`Transaction ${hash} reverted in block ${Number(receipt.blockNumber)}`);
+      }
+      log(`Transaction confirmed in block ${Number(receipt.blockNumber)}`);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, TRANSACTION_RECEIPT_POLL_INTERVAL_MS));
+  }
+
+  throw new Error(`Transaction ${hash} was not confirmed within 3 minutes`);
 }
 
 // Builds the exact ABI arguments for a middleware-provided native tx.

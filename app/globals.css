@@ -185,6 +185,19 @@ code {
   color: var(--danger);
 }
 
+.statusBanner.warning {
+  border-color: color-mix(in srgb, #b7791f 45%, var(--line));
+  background: #fffaf0;
+}
+
+.statusBanner.warning p {
+  color: #975a16;
+}
+
+.statusBanner.warning .dot {
+  background: #d69e2e;
+}
+
 .dot,
 .pulseDot {
   width: 10px;
@@ -713,6 +726,35 @@ code {
   margin-left: auto;
   color: var(--muted);
   font-weight: 750;
+}
+
+.balanceTokenGroup {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.balanceTokenGroupHeader {
+  display: flex;
+  width: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.balanceTokenGroupList {
+  display: grid;
+  gap: 7px;
 }
 
 .balanceToken small {

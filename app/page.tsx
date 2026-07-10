@@ -15,6 +15,7 @@ import {
   buildIntentQuoteRequest,
   connectInjectedWallet,
   executeIntentQuote,
+  findInsufficientInputs,
   formatBalanceAmount,
   getChain,
   getToken,
@@ -44,6 +45,7 @@ export default function Page() {
   );
   const [status, setStatus] = useState("Loading intent catalog");
   const [error, setError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
   const [rawVisible, setRawVisible] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -113,6 +115,7 @@ export default function Page() {
     setSubmitResult(null);
     setIntentStatus(null);
     setError(null);
+    setWarnings([]);
   }
 
   function setTradeType(tradeType: IntentFormState["tradeType"]) {
@@ -181,10 +184,10 @@ export default function Page() {
       setSubmitResult(null);
       setIntentStatus(null);
       setRawVisible(false);
-      if (effectiveForm.tradeType === "exactOutput") {
-        setStatus("Refreshing balances");
-        await refreshBalances(effectiveForm.sender);
-      }
+      setWarnings([]);
+      setStatus("Refreshing balances");
+      const freshBalances = await refreshBalances(effectiveForm.sender);
+      setWarnings(findInsufficientInputs(deployment, effectiveForm, freshBalances));
       setStatus("Requesting quote");
       const nextQuote = await requestIntentQuote(deployment, effectiveForm);
       setQuote(nextQuote);
@@ -306,6 +309,18 @@ export default function Page() {
 
       <StatusBanner status={status} error={error} busy={busy || polling} />
 
+      {warnings.length ? (
+        <div className="statusBanner warning">
+          <span className="dot" />
+          <div>
+            <strong>Heads up</strong>
+            {warnings.map((warning, index) => (
+              <p key={index}>{warning}</p>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="appGrid">
         <section className="mainStack">
           <div className="panel bridgePanel">
@@ -372,6 +387,7 @@ export default function Page() {
                         {sourceTokens.map((token) => (
                           <option key={token.address} value={token.address}>
                             {token.symbol}
+                            {token.sourceKind === "swap" ? " · swap" : ""}
                           </option>
                         ))}
                       </select>
@@ -458,6 +474,7 @@ export default function Page() {
                     {destinationTokens.map((token) => (
                       <option key={token.address} value={token.address}>
                         {token.symbol}
+                        {token.sourceKind === "swap" ? " · swap" : ""}
                       </option>
                     ))}
                   </select>
@@ -698,7 +715,9 @@ function SelectionSummary({
       <div>
         <strong>{token.symbol}</strong>
         <span>
-          {token.native ? "Native token" : shortAddress(token.address)}
+          {token.native
+            ? "Native token"
+            : `${token.sourceKind === "swap" ? "Swap" : "Regular"} · ${shortAddress(token.address)}`}
         </span>
       </div>
     </div>
@@ -989,6 +1008,16 @@ function InputsEditor({
                 </select>
               </label>
               <label className="field">
+                <span className="label">Amount</span>
+                <input
+                  inputMode="decimal"
+                  value={leg.amount}
+                  onChange={(event) =>
+                    updateLeg(index, { amount: event.target.value })
+                  }
+                />
+              </label>
+              <label className="field">
                 <span className="label">Token</span>
                 <select
                   value={leg.token}
@@ -998,21 +1027,11 @@ function InputsEditor({
                 >
                   {tokens.map((nextToken) => (
                     <option key={nextToken.address} value={nextToken.address}>
-                      {nextToken.symbol} ·{" "}
-                      {nextToken.native ? "native" : nextToken.address}
+                      {nextToken.symbol}
+                      {nextToken.sourceKind === "swap" ? " · swap" : ""}
                     </option>
                   ))}
                 </select>
-              </label>
-              <label className="field">
-                <span className="label">Amount</span>
-                <input
-                  inputMode="decimal"
-                  value={leg.amount}
-                  onChange={(event) =>
-                    updateLeg(index, { amount: event.target.value })
-                  }
-                />
               </label>
             </div>
           </div>
@@ -1040,48 +1059,132 @@ function BalanceList({
         <div className="emptyState">
           Connect a wallet or request a quote to load balances.
         </div>
-      ) : (
-        <div className="balanceList">
-          {deployment.chains.map((chain) => {
-            const chainBalance = balances[String(chain.chainId)];
-            return (
-              <div className="balanceGroup" key={chain.chainId}>
-                <div className="balanceHeader">
-                  <Logo src={chain.logo} label={chain.name} />
-                  <strong>{chain.name}</strong>
-                  <span>${chainBalance?.total_usd ?? "0"}</span>
-                </div>
-                {chainBalance?.errored ? (
-                  <span className="errorText">
-                    Balance fetch failed for this chain.
-                  </span>
-                ) : null}
-                {chainBalance?.currencies?.length ? (
-                  chainBalance.currencies.map((currency) => (
-                    <div
-                      className="balanceToken"
-                      key={`${chain.chainId}-${currency.token_address}`}
-                    >
-                      <Logo src={currency.logo} label={currency.symbol} />
-                      <span>
-                        {currency.symbol}:{" "}
-                        {formatBalanceAmount(
-                          currency.balance,
-                          currency.decimals,
-                        )}
-                      </span>
-                      <small>${currency.value}</small>
-                    </div>
-                  ))
-                ) : (
-                  <span className="muted">No balances returned.</span>
-                )}
+      ) : null}
+      <div className="balanceList">
+        {deployment.chains.map((chain) => {
+          const chainBalance = balances?.[String(chain.chainId)];
+          const tokens = getTokensForChain(deployment, chain.chainId);
+          return (
+            <div className="balanceGroup" key={chain.chainId}>
+              <div className="balanceHeader">
+                <Logo src={chain.logo} label={chain.name} />
+                <strong>{chain.name}</strong>
+                <span>${chainBalance?.total_usd ?? "0"}</span>
               </div>
-            );
-          })}
-        </div>
-      )}
+              {chainBalance?.errored ? (
+                <span className="errorText">
+                  Balance fetch failed for this chain.
+                </span>
+              ) : null}
+              <BalanceTokenGroups
+                tokens={tokens}
+                currencies={chainBalance?.currencies ?? []}
+              />
+            </div>
+          );
+        })}
+      </div>
     </div>
+  );
+}
+
+function BalanceTokenGroups({
+  tokens,
+  currencies,
+}: {
+  tokens: SelectableToken[];
+  currencies: BalancesByChain[string]["currencies"];
+}) {
+  const regularTokens = tokens.filter((token) => token.sourceKind !== "swap");
+  const swapTokens = tokens.filter((token) => token.sourceKind === "swap");
+
+  return (
+    <>
+      <BalanceTokenGroup
+        title="Regular"
+        tokens={regularTokens}
+        currencies={currencies}
+      />
+      <BalanceTokenGroup
+        title="Swap"
+        tokens={swapTokens}
+        currencies={currencies}
+      />
+    </>
+  );
+}
+
+function BalanceTokenGroup({
+  title,
+  tokens,
+  currencies,
+}: {
+  title: string;
+  tokens: SelectableToken[];
+  currencies: BalancesByChain[string]["currencies"];
+}) {
+  const [open, setOpen] = useState(true);
+  if (!tokens.length) return null;
+
+  return (
+    <div className="balanceTokenGroup">
+      <button
+        type="button"
+        className="balanceTokenGroupHeader"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{title}</span>
+        <span>{open ? "−" : "+"}</span>
+      </button>
+      {open ? (
+        <div className="balanceTokenGroupList">
+          {tokens.map((token) => (
+            <BalanceTokenRow
+              key={`${token.chainId}-${token.address}`}
+              token={token}
+              currency={findBalanceCurrency(currencies, token)}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BalanceTokenRow({
+  token,
+  currency,
+}: {
+  token: SelectableToken;
+  currency?: BalancesByChain[string]["currencies"][number];
+}) {
+  return (
+    <div className="balanceToken">
+      <Logo src={token.logo ?? currency?.logo} label={token.symbol} />
+      <span>
+        {token.symbol}:{" "}
+        {currency
+          ? formatBalanceAmount(currency.balance, currency.decimals)
+          : "0"}
+      </span>
+      <small>
+        {currency
+          ? `$${currency.value}`
+          : token.native
+            ? "Native"
+            : shortAddress(token.address)}
+      </small>
+    </div>
+  );
+}
+
+function findBalanceCurrency(
+  currencies: BalancesByChain[string]["currencies"],
+  token: SelectableToken,
+) {
+  const tokenAddress = token.address.toLowerCase();
+  return currencies.find(
+    (currency) => currency.token_address.toLowerCase() === tokenAddress,
   );
 }
 
