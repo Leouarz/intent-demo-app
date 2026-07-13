@@ -152,7 +152,8 @@ export default function Page() {
   }
 
   async function refreshBalances(account: Hex) {
-    const nextBalances = await fetchBridgeBalances(account);
+    if (!deployment) throw new Error("Intent deployment is not loaded");
+    const nextBalances = await fetchBridgeBalances(account, deployment);
     setBalances(nextBalances);
     return nextBalances;
   }

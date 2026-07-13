@@ -74,18 +74,105 @@ export async function fetchDeployment(): Promise<DeploymentResponse> {
   };
 }
 
-// Loads bridge balances for the address before asking middleware for a quote.
+// Loads regular and swap balances for the address before asking middleware for a quote. The
+// regular snapshot remains authoritative for duplicate tokens; swap-only currencies are added.
 export async function fetchBridgeBalances(
+  address: Hex,
+  deployment: DeploymentResponse,
+): Promise<BalancesByChain> {
+  const validatedAddress = assertAddress(address, "user address");
+  const bridgeBalances = await fetchBalanceSnapshot("balance", validatedAddress);
+
+  // Swap balances are an enhancement for the demo. A regular balance response is still useful
+  // when Ankr or a swap-chain RPC is unavailable, so only the required bridge request is fatal.
+  try {
+    const swapBalances = await fetchBalanceSnapshot("swap-balance", validatedAddress);
+    return mergeBalances(bridgeBalances, swapBalances, deployment);
+  } catch {
+    return bridgeBalances;
+  }
+}
+
+async function fetchBalanceSnapshot(
+  endpoint: "balance" | "swap-balance",
   address: Hex,
 ): Promise<BalancesByChain> {
   const response = await fetch(
-    `${MIDDLEWARE_URL}/api/v1/balance/evm/${assertAddress(address, "user address")}`,
+    `${MIDDLEWARE_URL}/api/v1/${endpoint}/evm/${address}`,
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(readMiddlewareError(body, response.status));
   }
   return body as BalancesByChain;
+}
+
+// Merges the two balance views without double-counting tokens returned by both endpoints.
+export function mergeBalances(
+  primary: BalancesByChain,
+  secondary: BalancesByChain,
+  deployment: DeploymentResponse,
+): BalancesByChain {
+  const merged: BalancesByChain = { ...primary };
+
+  for (const [chainId, extra] of Object.entries(secondary)) {
+    const swapCurrencies = extra.currencies.filter((currency) =>
+      getMayanSwapAddresses(deployment, Number(chainId)).has(
+        currency.token_address.toLowerCase(),
+      ),
+    );
+    const base = merged[chainId];
+    if (!base) {
+      merged[chainId] = {
+        ...extra,
+        currencies: swapCurrencies,
+        total_usd: swapCurrencies
+          .reduce((sum, currency) => sum + (Number(currency.value) || 0), 0)
+          .toFixed(2),
+      };
+      continue;
+    }
+
+    const currencies = [...base.currencies];
+    const seen = new Set(
+      currencies.map((currency) => currency.token_address.toLowerCase()),
+    );
+    for (const currency of swapCurrencies) {
+      const token = currency.token_address.toLowerCase();
+      if (seen.has(token)) continue;
+      seen.add(token);
+      currencies.push(currency);
+    }
+
+    merged[chainId] = {
+      ...base,
+      currencies,
+      total_usd: currencies
+        .reduce((sum, currency) => sum + (Number(currency.value) || 0), 0)
+        .toFixed(2),
+      errored: base.errored || extra.errored,
+    };
+  }
+
+  return merged;
+}
+
+function getMayanSwapAddresses(
+  deployment: DeploymentResponse,
+  chainId: number,
+): Set<string> {
+  return new Set(
+    getTokensForDeploymentChain(deployment, chainId)
+      .filter((token) => token.sourceKind === "swap" && token.mayanEnabled === true)
+      .map((token) => token.address.toLowerCase()),
+  );
+}
+
+function getTokensForDeploymentChain(
+  deployment: DeploymentResponse,
+  chainId: number,
+): DeploymentToken[] {
+  return deployment.chains.find((chain) => chain.chainId === chainId)?.tokens ?? [];
 }
 
 // Requests a quote from the middleware intent quote endpoint.
