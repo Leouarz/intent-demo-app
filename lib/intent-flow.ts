@@ -5,11 +5,10 @@ import {
   assertAddress,
   buildIntentQuoteRequest,
   readMiddlewareError,
-  type BalancesByChain,
   type DeploymentChain,
   type DeploymentResponse,
-  type DeploymentToken,
   type IntentFormState,
+  type IntentBalances,
   type IntentQuote,
   type IntentStatusResponse,
   type IntentSubmitRequest,
@@ -21,166 +20,79 @@ export const MIDDLEWARE_URL =
 
 type IntentCatalogChain = Omit<DeploymentChain, "chainId" | "tokens"> & {
   chainId: number | string;
-  tokens?: DeploymentToken[];
+  tokens?: Array<{
+    address: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+    isNative: boolean;
+    logo?: string;
+    providers?: Array<{ id: "nexus-v2" | "mayan"; currencyId?: number }>;
+  }>;
 };
 
-type IntentTokenGroup = {
-  symbol: string;
-  name: string;
-  decimals: number;
-  byChain: Record<
-    string,
-    {
-      address: string;
-      decimals: number;
-      currencyId?: number;
-      coingeckoId?: string;
-      mayanEnabled?: boolean;
-      sourceKind?: "bridge" | "swap";
-      logo?: string;
-    }
-  >;
-};
-
-// Loads the intent module catalog used to populate chains and tokens.
+// Loads the provider catalog used to populate chains and tokens.
 export async function fetchDeployment(): Promise<DeploymentResponse> {
-  const [chainsResponse, tokensResponse] = await Promise.all([
-    fetch(`${MIDDLEWARE_URL}/api/v1/intent/chains`),
-    fetch(`${MIDDLEWARE_URL}/api/v1/intent/tokens`),
-  ]);
-  const [chainsBody, tokensBody] = await Promise.all([
-    chainsResponse.json().catch(() => null),
-    tokensResponse.json().catch(() => null),
-  ]);
-
-  if (!chainsResponse.ok) {
-    throw new Error(readMiddlewareError(chainsBody, chainsResponse.status));
+  const response = await fetch(`${MIDDLEWARE_URL}/api/v1/better-intent/chains`);
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(readMiddlewareError(body, response.status));
   }
-  if (!tokensResponse.ok) {
-    throw new Error(readMiddlewareError(tokensBody, tokensResponse.status));
+  if (!Array.isArray(body)) {
+    throw new Error(readMiddlewareError(body, response.status));
   }
 
-  const catalogTokens = buildTokensByChain(tokensBody as IntentTokenGroup[]);
   return {
-    network: "intent",
-    chains: (chainsBody as IntentCatalogChain[]).map((chain) => {
+    network: "better-intent",
+    chains: (body as IntentCatalogChain[]).map((chain) => {
       const chainId = parseIntentChainId(chain.chainId);
       return {
         ...chain,
         chainId,
-        tokens: catalogTokens.get(chainId) ?? chain.tokens ?? [],
+        tokens: (chain.tokens ?? [])
+          .filter((token) => !token.isNative)
+          .map((token) => ({
+            symbol: token.symbol,
+            name: token.name,
+            address: token.address,
+            decimals: token.decimals,
+            logo: token.logo,
+            providers: token.providers?.map((provider) => provider.id),
+            sourceKind: "bridge" as const,
+          })),
       };
     }),
   };
 }
 
-// Loads regular and swap balances for the address before asking middleware for a quote. The
-// regular snapshot remains authoritative for duplicate tokens; swap-only currencies are added.
-export async function fetchBridgeBalances(
+// Loads every routable balance returned by the provider-backed Ankr balance endpoint.
+export async function fetchIntentBalances(
   address: Hex,
-  deployment: DeploymentResponse,
-): Promise<BalancesByChain> {
+): Promise<IntentBalances> {
   const validatedAddress = assertAddress(address, "user address");
-  const bridgeBalances = await fetchBalanceSnapshot("balance", validatedAddress);
-
-  // Swap balances are an enhancement for the demo. A regular balance response is still useful
-  // when Ankr or a swap-chain RPC is unavailable, so only the required bridge request is fatal.
-  try {
-    const swapBalances = await fetchBalanceSnapshot("swap-balance", validatedAddress);
-    return mergeBalances(bridgeBalances, swapBalances, deployment);
-  } catch {
-    return bridgeBalances;
-  }
-}
-
-async function fetchBalanceSnapshot(
-  endpoint: "balance" | "swap-balance",
-  address: Hex,
-): Promise<BalancesByChain> {
   const response = await fetch(
-    `${MIDDLEWARE_URL}/api/v1/${endpoint}/evm/${address}`,
+    `${MIDDLEWARE_URL}/api/v1/better-intent/balances/${validatedAddress}?refresh=true`,
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(readMiddlewareError(body, response.status));
   }
-  return body as BalancesByChain;
-}
-
-// Merges the two balance views without double-counting tokens returned by both endpoints.
-export function mergeBalances(
-  primary: BalancesByChain,
-  secondary: BalancesByChain,
-  deployment: DeploymentResponse,
-): BalancesByChain {
-  const merged: BalancesByChain = { ...primary };
-
-  for (const [chainId, extra] of Object.entries(secondary)) {
-    const swapCurrencies = extra.currencies.filter((currency) =>
-      getMayanSwapAddresses(deployment, Number(chainId)).has(
-        currency.token_address.toLowerCase(),
-      ),
-    );
-    const base = merged[chainId];
-    if (!base) {
-      merged[chainId] = {
-        ...extra,
-        currencies: swapCurrencies,
-        total_usd: swapCurrencies
-          .reduce((sum, currency) => sum + (Number(currency.value) || 0), 0)
-          .toFixed(2),
-      };
-      continue;
-    }
-
-    const currencies = [...base.currencies];
-    const seen = new Set(
-      currencies.map((currency) => currency.token_address.toLowerCase()),
-    );
-    for (const currency of swapCurrencies) {
-      const token = currency.token_address.toLowerCase();
-      if (seen.has(token)) continue;
-      seen.add(token);
-      currencies.push(currency);
-    }
-
-    merged[chainId] = {
-      ...base,
-      currencies,
-      total_usd: currencies
-        .reduce((sum, currency) => sum + (Number(currency.value) || 0), 0)
-        .toFixed(2),
-      errored: base.errored || extra.errored,
-    };
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !Array.isArray((body as IntentBalances).balances)
+  ) {
+    throw new Error(readMiddlewareError(body, response.status));
   }
-
-  return merged;
+  return body as IntentBalances;
 }
 
-function getMayanSwapAddresses(
-  deployment: DeploymentResponse,
-  chainId: number,
-): Set<string> {
-  return new Set(
-    getTokensForDeploymentChain(deployment, chainId)
-      .filter((token) => token.sourceKind === "swap" && token.mayanEnabled === true)
-      .map((token) => token.address.toLowerCase()),
-  );
-}
-
-function getTokensForDeploymentChain(
-  deployment: DeploymentResponse,
-  chainId: number,
-): DeploymentToken[] {
-  return deployment.chains.find((chain) => chain.chainId === chainId)?.tokens ?? [];
-}
-
-// Requests a quote from the middleware intent quote endpoint.
+// Requests a quote from the provider-backed intent endpoint.
 export async function requestIntentQuote(
   deployment: DeploymentResponse,
   form: IntentFormState,
 ): Promise<IntentQuote> {
-  const response = await fetch(`${MIDDLEWARE_URL}/api/v1/intent/quote`, {
+  const response = await fetch(`${MIDDLEWARE_URL}/api/v1/better-intent/quote`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(buildIntentQuoteRequest(deployment, form)),
@@ -197,11 +109,14 @@ export async function requestIntentQuote(
 export async function submitIntent(
   request: IntentSubmitRequest,
 ): Promise<IntentSubmitResponse> {
-  const response = await fetch(`${MIDDLEWARE_URL}/api/v1/intent/submit`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(request),
-  });
+  const response = await fetch(
+    `${MIDDLEWARE_URL}/api/v1/better-intent/submit`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
 
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -215,7 +130,7 @@ export async function fetchIntentStatus(
   quoteId: Hex,
 ): Promise<IntentStatusResponse> {
   const response = await fetch(
-    `${MIDDLEWARE_URL}/api/v1/intent/status/${quoteId}`,
+    `${MIDDLEWARE_URL}/api/v1/better-intent/status/${quoteId}`,
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -249,29 +164,4 @@ function parseIntentChainId(value: number | string): number {
   const match = /^EVM_(\d+)$/.exec(value);
   if (!match) throw new Error(`Unsupported intent chain id ${value}`);
   return Number(match[1]);
-}
-
-function buildTokensByChain(
-  groups: IntentTokenGroup[],
-): Map<number, DeploymentToken[]> {
-  const byChain = new Map<number, DeploymentToken[]>();
-
-  for (const group of groups) {
-    for (const [chainRef, token] of Object.entries(group.byChain)) {
-      const chainId = parseIntentChainId(chainRef);
-      const tokens = byChain.get(chainId) ?? [];
-      tokens.push({
-        symbol: group.symbol,
-        name: group.name,
-        address: token.address,
-        decimals: token.decimals,
-        logo: token.logo,
-        sourceKind: token.sourceKind ?? "bridge",
-        mayanEnabled: token.mayanEnabled,
-      });
-      byChain.set(chainId, tokens);
-    }
-  }
-
-  return byChain;
 }

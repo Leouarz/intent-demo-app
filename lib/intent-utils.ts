@@ -25,6 +25,7 @@ export type DeploymentToken = {
   logo?: string;
   sourceKind?: "bridge" | "swap";
   mayanEnabled?: boolean;
+  providers?: Array<"nexus-v2" | "mayan">;
 };
 
 export type DeploymentChain = {
@@ -59,21 +60,27 @@ export type SelectableToken = {
   mayanEnabled?: boolean;
 };
 
-export type ChainBalance = {
-  currencies: {
-    balance: string;
-    token_address: Hex;
-    name: string;
-    symbol: string;
-    decimals: number;
-    value: string;
-    logo?: string;
-  }[];
-  total_usd: string;
-  errored: boolean;
+export type IntentBalance = {
+  universe: "EVM";
+  chainId: string;
+  address: Hex;
+  name: string;
+  symbol: string;
+  decimals: number;
+  isNative: boolean;
+  logo?: string;
+  coingeckoId?: string;
+  providers: Array<{ id: "nexus-v2" | "mayan"; currencyId?: number }>;
+  balance: string;
+  valueUsd: number | null;
+  priceSource: "oracle" | "indexer" | null;
+  usable: boolean;
 };
 
-export type BalancesByChain = Record<string, ChainBalance>;
+export type IntentBalances = {
+  balances: IntentBalance[];
+  errored: boolean;
+};
 
 export type SourcePreference = {
   sourceChain: number;
@@ -163,19 +170,20 @@ export type IntentQuote = {
     value: string;
     functionName: string;
     abi: Abi;
-    vaultRequest: unknown;
+    request: unknown;
     argsTemplate: {
       request: string;
       signature: string;
       sourceIndex: number;
-      routeData?: Hex;
+      payload?: string;
     };
-    routeData?: Hex;
+    payload?: {
+      protocol_tag: string;
+      target: Hex;
+      calldata: Hex;
+      arbitrary_data: Hex;
+    };
   }>;
-  externalQuote?: {
-    provider: "mayan";
-    quotes: unknown[];
-  };
   submitRequirements?: {
     requiresIntentSignature: boolean;
     requiresApprovals: boolean;
@@ -190,9 +198,9 @@ export type IntentLifecycleStatus =
   | "expired";
 
 export type IntentSubmitRequest = {
+  provider?: "nexus-v2" | "mayan";
   rff: unknown;
   rffSignature: Hex;
-  externalQuote?: IntentQuote["externalQuote"];
   nativeTxReceipts?: Array<{ sourceIndex: number; txHash: Hex }>;
 };
 
@@ -291,15 +299,12 @@ export function getChain(
   return chain;
 }
 
-// Lists the selectable native token and Mayan-enabled configured tokens for a chain.
+// Lists the selectable native token and every provider-catalog token for a chain.
 export function getTokensForChain(
   deployment: DeploymentResponse,
   chainId: number,
 ): SelectableToken[] {
   const chain = getChain(deployment, chainId);
-  const mayanEnabledTokens = chain.tokens.filter(
-    (token) => token.mayanEnabled === true,
-  );
   return [
     {
       chainId: chain.chainId,
@@ -311,7 +316,7 @@ export function getTokensForChain(
       native: true,
       sourceKind: "bridge",
     },
-    ...mayanEnabledTokens.map((token) => ({
+    ...chain.tokens.map((token) => ({
       chainId: chain.chainId,
       symbol: token.symbol,
       name: token.name,
@@ -361,7 +366,7 @@ export function formatBalanceAmount(balance: string, decimals: number): string {
 export function findInsufficientInputs(
   deployment: DeploymentResponse,
   form: IntentFormState,
-  balances: BalancesByChain,
+  balances: IntentBalances,
 ): string[] {
   if (form.tradeType !== "exactInput") return [];
   const warnings: string[] = [];
@@ -370,11 +375,12 @@ export function findInsufficientInputs(
     try {
       const token = getToken(deployment, leg.chainId, leg.token);
       required = parseUnits(leg.amount.trim() || "0", token.decimals);
-      const currency = balances[String(leg.chainId)]?.currencies.find(
+      const balance = balances.balances.find(
         (item) =>
-          item.token_address.toLowerCase() === token.address.toLowerCase(),
+          item.chainId === `EVM_${leg.chainId}` &&
+          item.address.toLowerCase() === token.address.toLowerCase(),
       );
-      const available = currency ? BigInt(currency.balance) : 0n;
+      const available = balance ? BigInt(balance.balance) : 0n;
       if (required > available) {
         const chain = getChain(deployment, leg.chainId);
         warnings.push(
@@ -497,9 +503,9 @@ export async function executeIntentQuote(
   }));
 
   const submitRequest: IntentSubmitRequest = {
+    provider: quote.provider,
     rff: quote.rff,
     rffSignature,
-    ...(quote.externalQuote ? { externalQuote: quote.externalQuote } : {}),
     ...(nativeTxReceipts.length ? { nativeTxReceipts } : {}),
   };
 
@@ -630,12 +636,16 @@ async function waitForSuccessfulTransactionReceipt(
     });
     if (receipt) {
       if (receipt.status !== "0x1") {
-        throw new Error(`Transaction ${hash} reverted in block ${Number(receipt.blockNumber)}`);
+        throw new Error(
+          `Transaction ${hash} reverted in block ${Number(receipt.blockNumber)}`,
+        );
       }
       log(`Transaction confirmed in block ${Number(receipt.blockNumber)}`);
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, TRANSACTION_RECEIPT_POLL_INTERVAL_MS));
+    await new Promise((resolve) =>
+      setTimeout(resolve, TRANSACTION_RECEIPT_POLL_INTERVAL_MS),
+    );
   }
 
   throw new Error(`Transaction ${hash} was not confirmed within 3 minutes`);
@@ -647,11 +657,11 @@ export function buildNativeTxArgs(
   rffSignature: Hex,
 ) {
   const baseArgs = [
-    nativeTx.vaultRequest,
+    nativeTx.request,
     rffSignature,
     BigInt(nativeTx.sourceIndex),
   ];
-  return nativeTx.routeData ? [...baseArgs, nativeTx.routeData] : baseArgs;
+  return nativeTx.payload ? [...baseArgs, nativeTx.payload] : baseArgs;
 }
 
 // Switches the connected wallet to the requested chain.
@@ -676,7 +686,9 @@ export function readMiddlewareError(body: unknown, status: number) {
     const record = body as Record<string, unknown>;
     if (typeof record.error === "string") return record.error;
     if (typeof record.message === "string") return record.message;
+    if (typeof record.code === "string") return record.code;
   }
+  if (typeof body === "string" && body.trim()) return body;
   return `Request failed with HTTP ${status}`;
 }
 
@@ -712,7 +724,9 @@ function parseSlippageBps(value: string) {
     slippageBps < 0 ||
     slippageBps > 10_000
   ) {
-    throw new Error("Slippage bps must be a whole number from 0 to 10000, or auto");
+    throw new Error(
+      "Slippage bps must be a whole number from 0 to 10000, or auto",
+    );
   }
   return slippageBps;
 }
