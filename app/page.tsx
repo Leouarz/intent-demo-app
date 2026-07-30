@@ -390,8 +390,7 @@ export default function Page() {
                       >
                         {sourceTokens.map((token) => (
                           <option key={token.address} value={token.address}>
-                            {token.symbol}
-                            {token.sourceKind === "swap" ? " · swap" : ""}
+                            {tokenOptionLabel(token)}
                           </option>
                         ))}
                       </select>
@@ -477,8 +476,7 @@ export default function Page() {
                   >
                     {destinationTokens.map((token) => (
                       <option key={token.address} value={token.address}>
-                        {token.symbol}
-                        {token.sourceKind === "swap" ? " · swap" : ""}
+                        {tokenOptionLabel(token)}
                       </option>
                     ))}
                   </select>
@@ -721,11 +719,16 @@ function SelectionSummary({
         <span>
           {token.native
             ? "Native token"
-            : `${token.sourceKind === "swap" ? "Swap" : "Regular"} · ${shortAddress(token.address)}`}
+            : `${token.name} · ${shortAddress(token.address)}`}
         </span>
       </div>
     </div>
   );
+}
+
+function tokenOptionLabel(token: SelectableToken): string {
+  if (token.native) return `${token.symbol} · native`;
+  return `${token.symbol} · ${shortAddress(token.address)} · ${token.name}`;
 }
 
 function InputSummary({
@@ -1031,8 +1034,7 @@ function InputsEditor({
                 >
                   {tokens.map((nextToken) => (
                     <option key={nextToken.address} value={nextToken.address}>
-                      {nextToken.symbol}
-                      {nextToken.sourceKind === "swap" ? " · swap" : ""}
+                      {tokenOptionLabel(nextToken)}
                     </option>
                   ))}
                 </select>

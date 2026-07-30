@@ -48,6 +48,36 @@ export type DeploymentResponse = {
   chains: DeploymentChain[];
 };
 
+function alphabetical(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { sensitivity: "base" });
+}
+
+function compareDeploymentTokens(left: DeploymentToken, right: DeploymentToken): number {
+  return (
+    alphabetical(left.symbol, right.symbol) ||
+    alphabetical(left.name, right.name) ||
+    left.address.localeCompare(right.address)
+  );
+}
+
+function compareDeploymentChains(left: DeploymentChain, right: DeploymentChain): number {
+  return alphabetical(left.name, right.name) || left.chainId - right.chainId;
+}
+
+export function sortDeploymentCatalog(
+  deployment: DeploymentResponse,
+): DeploymentResponse {
+  return {
+    ...deployment,
+    chains: [...deployment.chains]
+      .sort(compareDeploymentChains)
+      .map((chain) => ({
+        ...chain,
+        tokens: [...chain.tokens].sort(compareDeploymentTokens),
+      })),
+  };
+}
+
 export type SelectableToken = {
   chainId: number;
   symbol: string;
@@ -121,6 +151,21 @@ export type IntentInputLeg = {
   totalRequired: string;
 };
 
+export type RoutingPayload = {
+  protocol_tag: string;
+  target: Hex;
+  calldata: Hex;
+  arbitrary_data: Hex;
+};
+
+export type IntentRff = {
+  sources: Array<{
+    payload?: RoutingPayload;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+};
+
 export type IntentQuote = {
   quoteId: Hex;
   provider: "nexus-v2" | "mayan";
@@ -140,7 +185,7 @@ export type IntentQuote = {
     caGas: string;
   };
   expiry: string;
-  rff: unknown;
+  rff: IntentRff;
   rffHash: Hex;
   signing: {
     type: "personal_sign";
@@ -168,20 +213,16 @@ export type IntentQuote = {
     sourceIndex: number;
     to: Hex;
     value: string;
-    functionName: string;
+    functionName: "deposit" | "depositRouter";
     abi: Abi;
-    request: unknown;
+    request: IntentRff;
+    payload?: Hex;
     argsTemplate: {
       request: string;
       signature: string;
       sourceIndex: number;
       payload?: string;
-    };
-    payload?: {
-      protocol_tag: string;
-      target: Hex;
-      calldata: Hex;
-      arbitrary_data: Hex;
+      authorization?: "0x";
     };
   }>;
   submitRequirements?: {
@@ -199,7 +240,7 @@ export type IntentLifecycleStatus =
 
 export type IntentSubmitRequest = {
   provider?: "nexus-v2" | "mayan";
-  rff: unknown;
+  rff: IntentRff;
   rffSignature: Hex;
   nativeTxReceipts?: Array<{ sourceIndex: number; txHash: Hex }>;
 };
@@ -214,7 +255,7 @@ export type IntentStatusResponse = {
   provider: "nexus-v2" | "mayan";
   status: IntentLifecycleStatus;
   substatus: string;
-  rff: unknown;
+  rff: IntentRff;
 };
 
 export type IntentExecutionResult = {
@@ -305,7 +346,7 @@ export function getTokensForChain(
   chainId: number,
 ): SelectableToken[] {
   const chain = getChain(deployment, chainId);
-  return [
+  const tokens: SelectableToken[] = [
     {
       chainId: chain.chainId,
       symbol: chain.nativeCurrency.symbol,
@@ -328,6 +369,12 @@ export function getTokensForChain(
       mayanEnabled: token.mayanEnabled,
     })),
   ];
+  return tokens.sort(
+    (left, right) =>
+      alphabetical(left.symbol, right.symbol) ||
+      alphabetical(left.name, right.name) ||
+      left.address.localeCompare(right.address),
+  );
 }
 
 // Finds token metadata needed to convert a human amount into raw units.
@@ -383,8 +430,12 @@ export function findInsufficientInputs(
       const available = balance ? BigInt(balance.balance) : 0n;
       if (required > available) {
         const chain = getChain(deployment, leg.chainId);
+        const tokenLabel =
+          token.name && token.name !== token.symbol
+            ? `${token.symbol} (${token.name})`
+            : token.symbol;
         warnings.push(
-          `You send ${formatBalanceAmount(required.toString(), token.decimals)} ${token.symbol} ` +
+          `You send ${formatBalanceAmount(required.toString(), token.decimals)} ${tokenLabel} ` +
             `on ${chain.name} but only hold ` +
             `${formatBalanceAmount(available.toString(), token.decimals)} — the quote is valid, ` +
             `but the deposit will fail unless you fund the wallet.`,
@@ -661,7 +712,13 @@ export function buildNativeTxArgs(
     rffSignature,
     BigInt(nativeTx.sourceIndex),
   ];
-  return nativeTx.payload ? [...baseArgs, nativeTx.payload] : baseArgs;
+  if (nativeTx.functionName === "deposit") return baseArgs;
+
+  if (!nativeTx.payload) {
+    throw new Error(`Missing encoded routing payload for native source ${nativeTx.sourceIndex}`);
+  }
+
+  return [...baseArgs, nativeTx.payload, "0x" as Hex];
 }
 
 // Switches the connected wallet to the requested chain.

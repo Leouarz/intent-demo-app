@@ -13,6 +13,7 @@ import {
   type IntentStatusResponse,
   type IntentSubmitRequest,
   type IntentSubmitResponse,
+  sortDeploymentCatalog,
 } from "./intent-utils";
 
 export const MIDDLEWARE_URL =
@@ -42,7 +43,7 @@ export async function fetchDeployment(): Promise<DeploymentResponse> {
     throw new Error(readMiddlewareError(body, response.status));
   }
 
-  return {
+  return sortDeploymentCatalog({
     network: "better-intent",
     chains: (body as IntentCatalogChain[]).map((chain) => {
       const chainId = parseIntentChainId(chain.chainId);
@@ -62,7 +63,7 @@ export async function fetchDeployment(): Promise<DeploymentResponse> {
           })),
       };
     }),
-  };
+  });
 }
 
 // Loads every routable balance returned by the provider-backed Ankr balance endpoint.
