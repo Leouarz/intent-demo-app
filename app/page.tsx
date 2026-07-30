@@ -186,11 +186,10 @@ export default function Page() {
       setSubmitResult(null);
       setIntentStatus(null);
       setRawVisible(false);
-      setWarnings([]);
-      setStatus("Refreshing balances");
-      const freshBalances = await refreshBalances(effectiveForm.sender);
       setWarnings(
-        findInsufficientInputs(deployment, effectiveForm, freshBalances),
+        balances
+          ? findInsufficientInputs(deployment, effectiveForm, balances)
+          : [],
       );
       setStatus("Requesting quote");
       const nextQuote = await requestIntentQuote(deployment, effectiveForm);
