@@ -854,31 +854,43 @@ function QuotePanel({
         </div>
       </dl>
       <div className="quoteInputs">
-        {quote.input.map((input, index) => (
-          <div
-            className="quoteInputRow"
-            key={`${input.chainId}-${input.tokenAddress}-${index}`}
-          >
-            <span className="pill">Input {index + 1}</span>
-            <strong>
-              {formatQuoteAmount(
-                deployment,
-                input.chainId,
-                input.tokenAddress,
-                input.amount,
-              )}
-            </strong>
-            <span>
-              Total with fee:{" "}
-              {formatQuoteAmount(
-                deployment,
-                input.chainId,
-                input.tokenAddress,
-                input.totalRequired,
-              )}
-            </span>
-          </div>
-        ))}
+        {quote.input.map((input, index) => {
+          const chainId = Number(input.chainId.replace("EVM_", ""));
+          const chain = getChain(deployment, chainId);
+          const token = getToken(deployment, chainId, input.tokenAddress);
+
+          return (
+            <div
+              className="quoteInputRow"
+              key={`${input.chainId}-${input.tokenAddress}-${index}`}
+            >
+              <span className="pill">Input {index + 1}</span>
+              <div className="quoteInputSource">
+                <Logo src={chain.logo} label={chain.name} />
+                <div>
+                  <strong>{chain.name}</strong>
+                  <span>Source chain</span>
+                </div>
+                <Logo src={token.logo} label={token.symbol} />
+                <div>
+                  <strong>{token.symbol}</strong>
+                  <span>{token.name}</span>
+                </div>
+              </div>
+              <div className="quoteInputAmounts">
+                <strong>
+                  {formatBalanceAmount(input.amount, token.decimals)}{" "}
+                  {token.symbol}
+                </strong>
+                <span>
+                  Total with fee:{" "}
+                  {formatBalanceAmount(input.totalRequired, token.decimals)}{" "}
+                  {token.symbol}
+                </span>
+              </div>
+            </div>
+          );
+        })}
       </div>
       <span className="hashText">{quote.quoteId}</span>
       <div className="actions">

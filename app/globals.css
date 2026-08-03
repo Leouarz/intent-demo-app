@@ -613,7 +613,7 @@ code {
 
 .quoteInputRow {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: auto minmax(260px, 1fr) minmax(170px, auto);
   gap: 10px;
   align-items: center;
   border: 1px solid var(--line);
@@ -622,15 +622,40 @@ code {
   padding: 10px;
 }
 
-.quoteInputRow strong,
-.quoteInputRow span {
+.quoteInputSource {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
   min-width: 0;
-  overflow-wrap: anywhere;
 }
 
-.quoteInputRow > span:last-child {
+.quoteInputSource strong,
+.quoteInputSource span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quoteInputSource span,
+.quoteInputAmounts span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.quoteInputAmounts {
+  display: grid;
+  gap: 3px;
+  text-align: right;
+}
+
+.quoteInputRow strong,
+.quoteInputRow span,
+.quoteInputSource > div,
+.quoteInputAmounts {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .hashText {
@@ -819,8 +844,13 @@ code {
   }
 
   .formGrid,
-  .selectRow {
+  .selectRow,
+  .quoteInputRow {
     grid-template-columns: 1fr;
+  }
+
+  .quoteInputAmounts {
+    text-align: left;
   }
 }
 

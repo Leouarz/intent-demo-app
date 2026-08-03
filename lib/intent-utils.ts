@@ -215,10 +215,10 @@ export type IntentQuote = {
     value: string;
     functionName: "deposit" | "depositRouter";
     abi: Abi;
-    request: IntentRff;
+    vaultRequest: Record<string, unknown>;
     payload?: Hex;
     argsTemplate: {
-      request: string;
+      request: "nativeTransactions[n].vaultRequest";
       signature: string;
       sourceIndex: number;
       payload?: string;
@@ -541,6 +541,7 @@ export async function executeIntentQuote(
     quote.signing,
     log,
   );
+  log("Intent signature received");
   const nativeTransactions = await sendNativeTransactions(
     provider,
     options.account,
@@ -640,15 +641,22 @@ export async function sendNativeTransactions(
 ) {
   const sent = [];
   for (const nativeTx of nativeTransactions) {
+    log(
+      `Switching wallet to chain ${nativeTx.chainId} for native transaction`,
+    );
     await switchChain(provider, nativeTx.chainId);
+    log(`Wallet switched to chain ${nativeTx.chainId}`);
     const args = buildNativeTxArgs(nativeTx, rffSignature);
     const data = encodeFunctionData({
       abi: nativeTx.abi,
       functionName: nativeTx.functionName,
       args,
     });
+    log(`Native deposit transaction prepared on chain ${nativeTx.chainId}`);
 
-    log(`Sending native deposit on ${nativeTx.chainId}`);
+    log(
+      `Requesting native deposit transaction signature on chain ${nativeTx.chainId}`,
+    );
     const hash = await provider.request<Hex>({
       method: "eth_sendTransaction",
       params: [
@@ -708,7 +716,7 @@ export function buildNativeTxArgs(
   rffSignature: Hex,
 ) {
   const baseArgs = [
-    nativeTx.request,
+    nativeTx.vaultRequest,
     rffSignature,
     BigInt(nativeTx.sourceIndex),
   ];
