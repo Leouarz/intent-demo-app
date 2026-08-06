@@ -237,6 +237,17 @@ export default function Page() {
           }
         },
       });
+
+      if (finalStatus.status === "fulfilled") {
+        setStatus("Refreshing balances");
+        try {
+          await refreshBalances(effectiveForm.sender);
+          appendLog("Balances refreshed after fulfillment");
+        } catch (refreshError) {
+          appendLog(`Balance refresh failed: ${readError(refreshError)}`);
+        }
+      }
+
       setStatus(`Intent ${finalStatus.status}`);
     } catch (nextError) {
       setError(readError(nextError));
