@@ -407,9 +407,8 @@ export function formatBalanceAmount(balance: string, decimals: number): string {
   return `${whole}.${trimmed}`;
 }
 
-// Flags exactInput legs whose amount exceeds the sender's on-chain balance. A quote is pure price
-// discovery (the middleware never checks balances, so you can preview routes without funds), so this
-// returns non-blocking warnings rather than throwing — the shortfall only actually bites at deposit.
+// Flags exactInput legs whose gross source budget exceeds the sender's on-chain balance. The
+// middleware validates this too; this gives the demo an earlier, non-blocking warning.
 export function findInsufficientInputs(
   deployment: DeploymentResponse,
   form: IntentFormState,

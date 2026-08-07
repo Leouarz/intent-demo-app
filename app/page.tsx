@@ -890,11 +890,14 @@ function QuotePanel({
               </div>
               <div className="quoteInputAmounts">
                 <strong>
+                  {quote.tradeType === "exactInput" ? "Routed amount: " : ""}
                   {formatBalanceAmount(input.amount, token.decimals)}{" "}
                   {token.symbol}
                 </strong>
                 <span>
-                  Total with fee:{" "}
+                  {quote.tradeType === "exactInput"
+                    ? "Total wallet amount: "
+                    : "Total with fee: "}
                   {formatBalanceAmount(input.totalRequired, token.decimals)}{" "}
                   {token.symbol}
                 </span>
