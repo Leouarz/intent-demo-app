@@ -25,6 +25,7 @@ export type DeploymentToken = {
   logo?: string;
   sourceKind?: "bridge" | "swap";
   mayanEnabled?: boolean;
+  providers?: Array<"nexus-v2" | "mayan">;
 };
 
 export type DeploymentChain = {
@@ -47,6 +48,36 @@ export type DeploymentResponse = {
   chains: DeploymentChain[];
 };
 
+function alphabetical(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { sensitivity: "base" });
+}
+
+function compareDeploymentTokens(left: DeploymentToken, right: DeploymentToken): number {
+  return (
+    alphabetical(left.symbol, right.symbol) ||
+    alphabetical(left.name, right.name) ||
+    left.address.localeCompare(right.address)
+  );
+}
+
+function compareDeploymentChains(left: DeploymentChain, right: DeploymentChain): number {
+  return alphabetical(left.name, right.name) || left.chainId - right.chainId;
+}
+
+export function sortDeploymentCatalog(
+  deployment: DeploymentResponse,
+): DeploymentResponse {
+  return {
+    ...deployment,
+    chains: [...deployment.chains]
+      .sort(compareDeploymentChains)
+      .map((chain) => ({
+        ...chain,
+        tokens: [...chain.tokens].sort(compareDeploymentTokens),
+      })),
+  };
+}
+
 export type SelectableToken = {
   chainId: number;
   symbol: string;
@@ -59,21 +90,27 @@ export type SelectableToken = {
   mayanEnabled?: boolean;
 };
 
-export type ChainBalance = {
-  currencies: {
-    balance: string;
-    token_address: Hex;
-    name: string;
-    symbol: string;
-    decimals: number;
-    value: string;
-    logo?: string;
-  }[];
-  total_usd: string;
-  errored: boolean;
+export type IntentBalance = {
+  universe: "EVM";
+  chainId: string;
+  address: Hex;
+  name: string;
+  symbol: string;
+  decimals: number;
+  isNative: boolean;
+  logo?: string;
+  coingeckoId?: string;
+  providers: Array<{ id: "nexus-v2" | "mayan"; currencyId?: number }>;
+  balance: string;
+  valueUsd: number | null;
+  priceSource: "oracle" | "indexer" | null;
+  usable: boolean;
 };
 
-export type BalancesByChain = Record<string, ChainBalance>;
+export type IntentBalances = {
+  balances: IntentBalance[];
+  errored: boolean;
+};
 
 export type SourcePreference = {
   sourceChain: number;
@@ -114,6 +151,21 @@ export type IntentInputLeg = {
   totalRequired: string;
 };
 
+export type RoutingPayload = {
+  protocol_tag: string;
+  target: Hex;
+  calldata: Hex;
+  arbitrary_data: Hex;
+};
+
+export type IntentRff = {
+  sources: Array<{
+    payload?: RoutingPayload;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+};
+
 export type IntentQuote = {
   quoteId: Hex;
   provider: "nexus-v2" | "mayan";
@@ -133,7 +185,7 @@ export type IntentQuote = {
     caGas: string;
   };
   expiry: string;
-  rff: unknown;
+  rff: IntentRff;
   rffHash: Hex;
   signing: {
     type: "personal_sign";
@@ -161,21 +213,18 @@ export type IntentQuote = {
     sourceIndex: number;
     to: Hex;
     value: string;
-    functionName: string;
+    functionName: "deposit" | "depositRouter";
     abi: Abi;
-    vaultRequest: unknown;
+    vaultRequest: Record<string, unknown>;
+    payload?: Hex;
     argsTemplate: {
-      request: string;
+      request: "nativeTransactions[n].vaultRequest";
       signature: string;
       sourceIndex: number;
-      routeData?: Hex;
+      payload?: string;
+      authorization?: "0x";
     };
-    routeData?: Hex;
   }>;
-  externalQuote?: {
-    provider: "mayan";
-    quotes: unknown[];
-  };
   submitRequirements?: {
     requiresIntentSignature: boolean;
     requiresApprovals: boolean;
@@ -190,9 +239,9 @@ export type IntentLifecycleStatus =
   | "expired";
 
 export type IntentSubmitRequest = {
-  rff: unknown;
+  provider?: "nexus-v2" | "mayan";
+  rff: IntentRff;
   rffSignature: Hex;
-  externalQuote?: IntentQuote["externalQuote"];
   nativeTxReceipts?: Array<{ sourceIndex: number; txHash: Hex }>;
 };
 
@@ -206,7 +255,7 @@ export type IntentStatusResponse = {
   provider: "nexus-v2" | "mayan";
   status: IntentLifecycleStatus;
   substatus: string;
-  rff: unknown;
+  rff: IntentRff;
 };
 
 export type IntentExecutionResult = {
@@ -291,16 +340,13 @@ export function getChain(
   return chain;
 }
 
-// Lists the selectable native token and Mayan-enabled configured tokens for a chain.
+// Lists the selectable native token and every provider-catalog token for a chain.
 export function getTokensForChain(
   deployment: DeploymentResponse,
   chainId: number,
 ): SelectableToken[] {
   const chain = getChain(deployment, chainId);
-  const mayanEnabledTokens = chain.tokens.filter(
-    (token) => token.mayanEnabled === true,
-  );
-  return [
+  const tokens: SelectableToken[] = [
     {
       chainId: chain.chainId,
       symbol: chain.nativeCurrency.symbol,
@@ -311,7 +357,7 @@ export function getTokensForChain(
       native: true,
       sourceKind: "bridge",
     },
-    ...mayanEnabledTokens.map((token) => ({
+    ...chain.tokens.map((token) => ({
       chainId: chain.chainId,
       symbol: token.symbol,
       name: token.name,
@@ -323,6 +369,12 @@ export function getTokensForChain(
       mayanEnabled: token.mayanEnabled,
     })),
   ];
+  return tokens.sort(
+    (left, right) =>
+      alphabetical(left.symbol, right.symbol) ||
+      alphabetical(left.name, right.name) ||
+      left.address.localeCompare(right.address),
+  );
 }
 
 // Finds token metadata needed to convert a human amount into raw units.
@@ -361,7 +413,7 @@ export function formatBalanceAmount(balance: string, decimals: number): string {
 export function findInsufficientInputs(
   deployment: DeploymentResponse,
   form: IntentFormState,
-  balances: BalancesByChain,
+  balances: IntentBalances,
 ): string[] {
   if (form.tradeType !== "exactInput") return [];
   const warnings: string[] = [];
@@ -370,15 +422,20 @@ export function findInsufficientInputs(
     try {
       const token = getToken(deployment, leg.chainId, leg.token);
       required = parseUnits(leg.amount.trim() || "0", token.decimals);
-      const currency = balances[String(leg.chainId)]?.currencies.find(
+      const balance = balances.balances.find(
         (item) =>
-          item.token_address.toLowerCase() === token.address.toLowerCase(),
+          item.chainId === `EVM_${leg.chainId}` &&
+          item.address.toLowerCase() === token.address.toLowerCase(),
       );
-      const available = currency ? BigInt(currency.balance) : 0n;
+      const available = balance ? BigInt(balance.balance) : 0n;
       if (required > available) {
         const chain = getChain(deployment, leg.chainId);
+        const tokenLabel =
+          token.name && token.name !== token.symbol
+            ? `${token.symbol} (${token.name})`
+            : token.symbol;
         warnings.push(
-          `You send ${formatBalanceAmount(required.toString(), token.decimals)} ${token.symbol} ` +
+          `You send ${formatBalanceAmount(required.toString(), token.decimals)} ${tokenLabel} ` +
             `on ${chain.name} but only hold ` +
             `${formatBalanceAmount(available.toString(), token.decimals)} — the quote is valid, ` +
             `but the deposit will fail unless you fund the wallet.`,
@@ -484,6 +541,7 @@ export async function executeIntentQuote(
     quote.signing,
     log,
   );
+  log("Intent signature received");
   const nativeTransactions = await sendNativeTransactions(
     provider,
     options.account,
@@ -497,9 +555,9 @@ export async function executeIntentQuote(
   }));
 
   const submitRequest: IntentSubmitRequest = {
+    provider: quote.provider,
     rff: quote.rff,
     rffSignature,
-    ...(quote.externalQuote ? { externalQuote: quote.externalQuote } : {}),
     ...(nativeTxReceipts.length ? { nativeTxReceipts } : {}),
   };
 
@@ -583,15 +641,22 @@ export async function sendNativeTransactions(
 ) {
   const sent = [];
   for (const nativeTx of nativeTransactions) {
+    log(
+      `Switching wallet to chain ${nativeTx.chainId} for native transaction`,
+    );
     await switchChain(provider, nativeTx.chainId);
+    log(`Wallet switched to chain ${nativeTx.chainId}`);
     const args = buildNativeTxArgs(nativeTx, rffSignature);
     const data = encodeFunctionData({
       abi: nativeTx.abi,
       functionName: nativeTx.functionName,
       args,
     });
+    log(`Native deposit transaction prepared on chain ${nativeTx.chainId}`);
 
-    log(`Sending native deposit on ${nativeTx.chainId}`);
+    log(
+      `Requesting native deposit transaction signature on chain ${nativeTx.chainId}`,
+    );
     const hash = await provider.request<Hex>({
       method: "eth_sendTransaction",
       params: [
@@ -630,12 +695,16 @@ async function waitForSuccessfulTransactionReceipt(
     });
     if (receipt) {
       if (receipt.status !== "0x1") {
-        throw new Error(`Transaction ${hash} reverted in block ${Number(receipt.blockNumber)}`);
+        throw new Error(
+          `Transaction ${hash} reverted in block ${Number(receipt.blockNumber)}`,
+        );
       }
       log(`Transaction confirmed in block ${Number(receipt.blockNumber)}`);
       return;
     }
-    await new Promise((resolve) => setTimeout(resolve, TRANSACTION_RECEIPT_POLL_INTERVAL_MS));
+    await new Promise((resolve) =>
+      setTimeout(resolve, TRANSACTION_RECEIPT_POLL_INTERVAL_MS),
+    );
   }
 
   throw new Error(`Transaction ${hash} was not confirmed within 3 minutes`);
@@ -651,7 +720,13 @@ export function buildNativeTxArgs(
     rffSignature,
     BigInt(nativeTx.sourceIndex),
   ];
-  return nativeTx.routeData ? [...baseArgs, nativeTx.routeData] : baseArgs;
+  if (nativeTx.functionName === "deposit") return baseArgs;
+
+  if (!nativeTx.payload) {
+    throw new Error(`Missing encoded routing payload for native source ${nativeTx.sourceIndex}`);
+  }
+
+  return [...baseArgs, nativeTx.payload, "0x" as Hex];
 }
 
 // Switches the connected wallet to the requested chain.
@@ -676,7 +751,9 @@ export function readMiddlewareError(body: unknown, status: number) {
     const record = body as Record<string, unknown>;
     if (typeof record.error === "string") return record.error;
     if (typeof record.message === "string") return record.message;
+    if (typeof record.code === "string") return record.code;
   }
+  if (typeof body === "string" && body.trim()) return body;
   return `Request failed with HTTP ${status}`;
 }
 
@@ -712,7 +789,9 @@ function parseSlippageBps(value: string) {
     slippageBps < 0 ||
     slippageBps > 10_000
   ) {
-    throw new Error("Slippage bps must be a whole number from 0 to 10000, or auto");
+    throw new Error(
+      "Slippage bps must be a whole number from 0 to 10000, or auto",
+    );
   }
   return slippageBps;
 }

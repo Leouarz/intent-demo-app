@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { SourceSelector } from "../components/source-selector";
 import {
   MIDDLEWARE_URL,
-  fetchBridgeBalances,
   fetchDeployment,
+  fetchIntentBalances,
   pollIntentStatus,
   requestIntentQuote,
   submitIntent,
@@ -20,11 +20,12 @@ import {
   getChain,
   getToken,
   getTokensForChain,
-  type BalancesByChain,
   type DeploymentChain,
   type DeploymentResponse,
   type Hex,
   type InputLeg,
+  type IntentBalance,
+  type IntentBalances,
   type IntentFormState,
   type IntentQuote,
   type IntentStatusResponse,
@@ -35,7 +36,7 @@ import {
 export default function Page() {
   const [deployment, setDeployment] = useState<DeploymentResponse | null>(null);
   const [form, setForm] = useState<IntentFormState | null>(null);
-  const [balances, setBalances] = useState<BalancesByChain | null>(null);
+  const [balances, setBalances] = useState<IntentBalances | null>(null);
   const [quote, setQuote] = useState<IntentQuote | null>(null);
   const [submitResult, setSubmitResult] = useState<IntentSubmitResponse | null>(
     null,
@@ -153,7 +154,7 @@ export default function Page() {
 
   async function refreshBalances(account: Hex) {
     if (!deployment) throw new Error("Intent deployment is not loaded");
-    const nextBalances = await fetchBridgeBalances(account, deployment);
+    const nextBalances = await fetchIntentBalances(account);
     setBalances(nextBalances);
     return nextBalances;
   }
@@ -185,10 +186,11 @@ export default function Page() {
       setSubmitResult(null);
       setIntentStatus(null);
       setRawVisible(false);
-      setWarnings([]);
-      setStatus("Refreshing balances");
-      const freshBalances = await refreshBalances(effectiveForm.sender);
-      setWarnings(findInsufficientInputs(deployment, effectiveForm, freshBalances));
+      setWarnings(
+        balances
+          ? findInsufficientInputs(deployment, effectiveForm, balances)
+          : [],
+      );
       setStatus("Requesting quote");
       const nextQuote = await requestIntentQuote(deployment, effectiveForm);
       setQuote(nextQuote);
@@ -235,6 +237,17 @@ export default function Page() {
           }
         },
       });
+
+      if (finalStatus.status === "fulfilled") {
+        setStatus("Refreshing balances");
+        try {
+          await refreshBalances(effectiveForm.sender);
+          appendLog("Balances refreshed after fulfillment");
+        } catch (refreshError) {
+          appendLog(`Balance refresh failed: ${readError(refreshError)}`);
+        }
+      }
+
       setStatus(`Intent ${finalStatus.status}`);
     } catch (nextError) {
       setError(readError(nextError));
@@ -387,8 +400,7 @@ export default function Page() {
                       >
                         {sourceTokens.map((token) => (
                           <option key={token.address} value={token.address}>
-                            {token.symbol}
-                            {token.sourceKind === "swap" ? " · swap" : ""}
+                            {tokenOptionLabel(token)}
                           </option>
                         ))}
                       </select>
@@ -408,7 +420,7 @@ export default function Page() {
                         <span>
                           {advancedOpen && form.sources.length
                             ? `${form.sources.length} preferred source set`
-                            : "Best eligible provider across available balances"}
+                            : "Best provider across available balances"}
                         </span>
                       </div>
                     </div>
@@ -474,8 +486,7 @@ export default function Page() {
                   >
                     {destinationTokens.map((token) => (
                       <option key={token.address} value={token.address}>
-                        {token.symbol}
-                        {token.sourceKind === "swap" ? " · swap" : ""}
+                        {tokenOptionLabel(token)}
                       </option>
                     ))}
                   </select>
@@ -718,11 +729,16 @@ function SelectionSummary({
         <span>
           {token.native
             ? "Native token"
-            : `${token.sourceKind === "swap" ? "Swap" : "Regular"} · ${shortAddress(token.address)}`}
+            : `${token.name} · ${shortAddress(token.address)}`}
         </span>
       </div>
     </div>
   );
+}
+
+function tokenOptionLabel(token: SelectableToken): string {
+  if (token.native) return `${token.symbol} · native`;
+  return `${token.symbol} · ${shortAddress(token.address)} · ${token.name}`;
 }
 
 function InputSummary({
@@ -849,31 +865,43 @@ function QuotePanel({
         </div>
       </dl>
       <div className="quoteInputs">
-        {quote.input.map((input, index) => (
-          <div
-            className="quoteInputRow"
-            key={`${input.chainId}-${input.tokenAddress}-${index}`}
-          >
-            <span className="pill">Input {index + 1}</span>
-            <strong>
-              {formatQuoteAmount(
-                deployment,
-                input.chainId,
-                input.tokenAddress,
-                input.amount,
-              )}
-            </strong>
-            <span>
-              Total with fee:{" "}
-              {formatQuoteAmount(
-                deployment,
-                input.chainId,
-                input.tokenAddress,
-                input.totalRequired,
-              )}
-            </span>
-          </div>
-        ))}
+        {quote.input.map((input, index) => {
+          const chainId = Number(input.chainId.replace("EVM_", ""));
+          const chain = getChain(deployment, chainId);
+          const token = getToken(deployment, chainId, input.tokenAddress);
+
+          return (
+            <div
+              className="quoteInputRow"
+              key={`${input.chainId}-${input.tokenAddress}-${index}`}
+            >
+              <span className="pill">Input {index + 1}</span>
+              <div className="quoteInputSource">
+                <Logo src={chain.logo} label={chain.name} />
+                <div>
+                  <strong>{chain.name}</strong>
+                  <span>Source chain</span>
+                </div>
+                <Logo src={token.logo} label={token.symbol} />
+                <div>
+                  <strong>{token.symbol}</strong>
+                  <span>{token.name}</span>
+                </div>
+              </div>
+              <div className="quoteInputAmounts">
+                <strong>
+                  {formatBalanceAmount(input.amount, token.decimals)}{" "}
+                  {token.symbol}
+                </strong>
+                <span>
+                  Total with fee:{" "}
+                  {formatBalanceAmount(input.totalRequired, token.decimals)}{" "}
+                  {token.symbol}
+                </span>
+              </div>
+            </div>
+          );
+        })}
       </div>
       <span className="hashText">{quote.quoteId}</span>
       <div className="actions">
@@ -1028,8 +1056,7 @@ function InputsEditor({
                 >
                   {tokens.map((nextToken) => (
                     <option key={nextToken.address} value={nextToken.address}>
-                      {nextToken.symbol}
-                      {nextToken.sourceKind === "swap" ? " · swap" : ""}
+                      {tokenOptionLabel(nextToken)}
                     </option>
                   ))}
                 </select>
@@ -1051,141 +1078,94 @@ function BalanceList({
   balances,
 }: {
   deployment: DeploymentResponse;
-  balances: BalancesByChain | null;
+  balances: IntentBalances | null;
 }) {
+  const grouped = new Map<string, IntentBalance[]>();
+  for (const balance of balances?.balances ?? []) {
+    const chainBalances = grouped.get(balance.chainId) ?? [];
+    chainBalances.push(balance);
+    grouped.set(balance.chainId, chainBalances);
+  }
+
+  const totalUsd = (balances?.balances ?? []).reduce(
+    (sum, balance) => sum + (balance.valueUsd ?? 0),
+    0,
+  );
+
   return (
     <div className="panel">
-      <span className="eyebrow">Balances</span>
+      <div className="panelHeader balancePanelHeader">
+        <div>
+          <span className="eyebrow">Balances</span>
+          <h2>{balances ? `$${totalUsd.toFixed(2)}` : "Wallet assets"}</h2>
+        </div>
+        {balances ? (
+          <span className="muted">{balances.balances.length} assets</span>
+        ) : null}
+      </div>
       {!balances ? (
         <div className="emptyState">
           Connect a wallet or request a quote to load balances.
         </div>
       ) : null}
+      {balances?.errored ? (
+        <div className="balanceWarning">
+          Some chains could not be refreshed. Showing the balances that were
+          returned.
+        </div>
+      ) : null}
       <div className="balanceList">
-        {deployment.chains.map((chain) => {
-          const chainBalance = balances?.[String(chain.chainId)];
-          const tokens = getTokensForChain(deployment, chain.chainId);
+        {[...grouped.entries()].map(([chainRef, chainBalances]) => {
+          const chainId = Number(chainRef.replace("EVM_", ""));
+          const chain = deployment.chains.find(
+            (item) => item.chainId === chainId,
+          );
+          const chainTotalUsd = chainBalances.reduce(
+            (sum, balance) => sum + (balance.valueUsd ?? 0),
+            0,
+          );
           return (
-            <div className="balanceGroup" key={chain.chainId}>
+            <div className="balanceGroup" key={chainRef}>
               <div className="balanceHeader">
-                <Logo src={chain.logo} label={chain.name} />
-                <strong>{chain.name}</strong>
-                <span>${chainBalance?.total_usd ?? "0"}</span>
+                <Logo src={chain?.logo} label={chain?.name ?? chainRef} />
+                <strong>{chain?.name ?? chainRef}</strong>
+                <span>${chainTotalUsd.toFixed(2)}</span>
               </div>
-              {chainBalance?.errored ? (
-                <span className="errorText">
-                  Balance fetch failed for this chain.
-                </span>
-              ) : null}
-              <BalanceTokenGroups
-                tokens={tokens}
-                currencies={chainBalance?.currencies ?? []}
-              />
+              <div className="balanceTokenGroupList">
+                {chainBalances.map((balance) => (
+                  <BalanceTokenRow
+                    key={`${balance.chainId}-${balance.address}`}
+                    balance={balance}
+                  />
+                ))}
+              </div>
             </div>
           );
         })}
+        {balances && balances.balances.length === 0 ? (
+          <div className="emptyState">No routable balances found.</div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function BalanceTokenGroups({
-  tokens,
-  currencies,
-}: {
-  tokens: SelectableToken[];
-  currencies: BalancesByChain[string]["currencies"];
-}) {
-  const regularTokens = tokens.filter((token) => token.sourceKind !== "swap");
-  const swapTokens = tokens.filter((token) => token.sourceKind === "swap");
-
-  return (
-    <>
-      <BalanceTokenGroup
-        title="Regular"
-        tokens={regularTokens}
-        currencies={currencies}
-      />
-      <BalanceTokenGroup
-        title="Swap"
-        tokens={swapTokens}
-        currencies={currencies}
-      />
-    </>
-  );
-}
-
-function BalanceTokenGroup({
-  title,
-  tokens,
-  currencies,
-}: {
-  title: string;
-  tokens: SelectableToken[];
-  currencies: BalancesByChain[string]["currencies"];
-}) {
-  const [open, setOpen] = useState(true);
-  if (!tokens.length) return null;
-
-  return (
-    <div className="balanceTokenGroup">
-      <button
-        type="button"
-        className="balanceTokenGroupHeader"
-        onClick={() => setOpen((current) => !current)}
-      >
-        <span>{title}</span>
-        <span>{open ? "−" : "+"}</span>
-      </button>
-      {open ? (
-        <div className="balanceTokenGroupList">
-          {tokens.map((token) => (
-            <BalanceTokenRow
-              key={`${token.chainId}-${token.address}`}
-              token={token}
-              currency={findBalanceCurrency(currencies, token)}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function BalanceTokenRow({
-  token,
-  currency,
-}: {
-  token: SelectableToken;
-  currency?: BalancesByChain[string]["currencies"][number];
-}) {
+function BalanceTokenRow({ balance }: { balance: IntentBalance }) {
   return (
     <div className="balanceToken">
-      <Logo src={token.logo ?? currency?.logo} label={token.symbol} />
+      <Logo src={balance.logo} label={balance.symbol} />
       <span>
-        {token.symbol}:{" "}
-        {currency
-          ? formatBalanceAmount(currency.balance, currency.decimals)
-          : "0"}
+        {formatBalanceAmount(balance.balance, balance.decimals)}{" "}
+        {balance.symbol}
       </span>
       <small>
-        {currency
-          ? `$${currency.value}`
-          : token.native
-            ? "Native"
-            : shortAddress(token.address)}
+        {balance.valueUsd === null
+          ? balance.isNative
+            ? "Native · no price"
+            : "No price"
+          : `$${balance.valueUsd.toFixed(2)}`}
       </small>
     </div>
-  );
-}
-
-function findBalanceCurrency(
-  currencies: BalancesByChain[string]["currencies"],
-  token: SelectableToken,
-) {
-  const tokenAddress = token.address.toLowerCase();
-  return currencies.find(
-    (currency) => currency.token_address.toLowerCase() === tokenAddress,
   );
 }
 
@@ -1265,5 +1245,13 @@ function shortHash(value: string) {
 }
 
 function readError(error: unknown) {
-  return error instanceof Error ? error.message : "Unexpected error";
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    if (typeof record.message === "string") return record.message;
+    if (typeof record.error === "string") return record.error;
+    if (typeof record.code === "string") return record.code;
+  }
+  return "Unexpected error";
 }

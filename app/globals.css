@@ -27,7 +27,12 @@ body {
     linear-gradient(180deg, #ffffff 0, var(--bg) 38rem);
   color: var(--ink);
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
     sans-serif;
 }
 
@@ -608,7 +613,7 @@ code {
 
 .quoteInputRow {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: auto minmax(260px, 1fr) minmax(170px, auto);
   gap: 10px;
   align-items: center;
   border: 1px solid var(--line);
@@ -617,15 +622,40 @@ code {
   padding: 10px;
 }
 
-.quoteInputRow strong,
-.quoteInputRow span {
+.quoteInputSource {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
   min-width: 0;
-  overflow-wrap: anywhere;
 }
 
-.quoteInputRow > span:last-child {
+.quoteInputSource strong,
+.quoteInputSource span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quoteInputSource span,
+.quoteInputAmounts span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.quoteInputAmounts {
+  display: grid;
+  gap: 3px;
+  text-align: right;
+}
+
+.quoteInputRow strong,
+.quoteInputRow span,
+.quoteInputSource > div,
+.quoteInputAmounts {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .hashText {
@@ -711,11 +741,15 @@ code {
 
 .balanceGroup {
   display: grid;
-  gap: 9px;
+  gap: 6px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-soft);
-  padding: 11px;
+  padding: 9px 11px;
+}
+
+.balancePanelHeader {
+  margin-bottom: 12px;
 }
 
 .balanceHeader {
@@ -754,11 +788,30 @@ code {
 
 .balanceTokenGroupList {
   display: grid;
-  gap: 7px;
+  gap: 0;
+}
+
+.balanceToken {
+  min-height: 38px;
+  border-top: 1px solid var(--line);
+  padding: 6px 0;
+}
+
+.balanceToken:first-child {
+  border-top: 0;
 }
 
 .balanceToken small {
   margin-left: auto;
+}
+
+.balanceWarning {
+  margin-bottom: 10px;
+  border-radius: 6px;
+  background: #fffaf0;
+  color: #975a16;
+  padding: 8px 10px;
+  font-size: 12px;
 }
 
 .errorText {
@@ -791,8 +844,13 @@ code {
   }
 
   .formGrid,
-  .selectRow {
+  .selectRow,
+  .quoteInputRow {
     grid-template-columns: 1fr;
+  }
+
+  .quoteInputAmounts {
+    text-align: left;
   }
 }
 
