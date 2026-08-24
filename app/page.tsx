@@ -6,6 +6,7 @@ import {
   MIDDLEWARE_URL,
   fetchDeployment,
   fetchIntentBalances,
+  fetchRouteCatalog,
   pollIntentStatus,
   requestIntentQuote,
   submitIntent,
@@ -18,6 +19,7 @@ import {
   findInsufficientInputs,
   formatBalanceAmount,
   getChain,
+  getMiddlewareErrorPayload,
   getToken,
   getTokensForChain,
   type DeploymentChain,
@@ -30,6 +32,8 @@ import {
   type IntentQuote,
   type IntentStatusResponse,
   type IntentSubmitResponse,
+  type MiddlewareErrorPayload,
+  type SourceVerdict,
   type SelectableToken,
 } from "../lib/intent-utils";
 
@@ -44,6 +48,11 @@ export default function Page() {
   const [intentStatus, setIntentStatus] = useState<IntentStatusResponse | null>(
     null,
   );
+  const [routeCatalog, setRouteCatalog] = useState<DeploymentResponse | null>(
+    null,
+  );
+  const [structuredError, setStructuredError] =
+    useState<MiddlewareErrorPayload | null>(null);
   const [status, setStatus] = useState("Loading intent catalog");
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -62,10 +71,12 @@ export default function Page() {
         if (cancelled) return;
         setDeployment(nextDeployment);
         setForm((current) => current ?? buildInitialIntentForm(nextDeployment));
+        setStructuredError(null);
         setStatus("Ready to quote intents");
       } catch (nextError) {
         if (!cancelled) {
           setError(readError(nextError));
+          setStructuredError(getMiddlewareErrorPayload(nextError));
           setStatus("Could not load middleware catalog");
         }
       }
@@ -115,6 +126,8 @@ export default function Page() {
     setQuote(null);
     setSubmitResult(null);
     setIntentStatus(null);
+    setRouteCatalog(null);
+    setStructuredError(null);
     setError(null);
     setWarnings([]);
   }
@@ -185,6 +198,8 @@ export default function Page() {
       setQuote(null);
       setSubmitResult(null);
       setIntentStatus(null);
+      setRouteCatalog(null);
+      setStructuredError(null);
       setRawVisible(false);
       setWarnings(
         balances
@@ -194,10 +209,16 @@ export default function Page() {
       setStatus("Requesting quote");
       const nextQuote = await requestIntentQuote(deployment, effectiveForm);
       setQuote(nextQuote);
+      try {
+        setRouteCatalog(await fetchRouteCatalog(deployment, effectiveForm));
+      } catch (routeError) {
+        addLog(`Route preflight unavailable: ${readError(routeError)}`);
+      }
       setStatus(`Quote ready from ${nextQuote.provider}`);
       addLog(`Quote ${shortHash(nextQuote.quoteId)} via ${nextQuote.provider}`);
     } catch (nextError) {
       setError(readError(nextError));
+      setStructuredError(getMiddlewareErrorPayload(nextError));
       setStatus("Quote failed");
     } finally {
       setBusy(false);
@@ -212,6 +233,7 @@ export default function Page() {
       setError(null);
       setSubmitResult(null);
       setIntentStatus(null);
+      setStructuredError(null);
       const appendLog = (message: string) => addLog(message);
       const execution = await executeIntentQuote(quote, {
         account: effectiveForm.sender,
@@ -251,6 +273,7 @@ export default function Page() {
       setStatus(`Intent ${finalStatus.status}`);
     } catch (nextError) {
       setError(readError(nextError));
+      setStructuredError(getMiddlewareErrorPayload(nextError));
       setStatus("Wallet flow failed");
     } finally {
       setPolling(false);
@@ -267,6 +290,7 @@ export default function Page() {
       setError(null);
     } catch (nextError) {
       setError(readError(nextError));
+      setStructuredError(getMiddlewareErrorPayload(nextError));
     }
   }
 
@@ -322,6 +346,10 @@ export default function Page() {
       </section>
 
       <StatusBanner status={status} error={error} busy={busy || polling} />
+
+      {structuredError ? (
+        <MiddlewareErrorPanel error={structuredError} deployment={deployment} />
+      ) : null}
 
       {warnings.length ? (
         <div className="statusBanner warning">
@@ -648,6 +676,10 @@ export default function Page() {
             busy={busy}
             polling={polling}
           />
+          <RoutePreview
+            catalog={routeCatalog}
+            form={effectiveForm}
+          />
           <StatusPanel
             quote={quote}
             submitResult={submitResult}
@@ -906,6 +938,10 @@ function QuotePanel({
           );
         })}
       </div>
+      <SourceVerdictPanel
+        deployment={deployment}
+        verdicts={quote.sourceVerdicts}
+      />
       <span className="hashText">{quote.quoteId}</span>
       <div className="actions">
         <button type="button" onClick={onLog}>
@@ -920,6 +956,175 @@ function QuotePanel({
           {polling ? "Polling status" : "Run full flow"}
         </button>
       </div>
+    </div>
+  );
+}
+
+function SourceVerdictPanel({
+  deployment,
+  verdicts,
+}: {
+  deployment: DeploymentResponse;
+  verdicts: SourceVerdict[];
+}) {
+  if (verdicts.length === 0) return null;
+  return (
+    <details className="verdictPanel">
+      <summary className="verdictSummary panelHeader">
+        <div>
+          <span className="eyebrow">Routing diagnostics</span>
+          <h3>Source verdicts</h3>
+        </div>
+        <span className="verdictSummaryMeta">
+          <span className="muted">{verdicts.length} considered</span>
+          <span className="verdictDisclosure">Show details</span>
+        </span>
+      </summary>
+      <div className="verdictList">
+        {verdicts.map((verdict) => (
+          <VerdictRow
+            key={`${verdict.chainId}-${verdict.tokenAddress}`}
+            deployment={deployment}
+            verdict={verdict}
+          />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function VerdictRow({
+  deployment,
+  verdict,
+}: {
+  deployment: DeploymentResponse;
+  verdict: SourceVerdict;
+}) {
+  const chainId = Number(verdict.chainId.replace("EVM_", ""));
+  const chain = deployment.chains.find((item) => item.chainId === chainId);
+  const stateLabel = verdict.state === "unroutable" ? verdict.reason : verdict.state;
+  return (
+    <div className={`verdictRow ${verdict.state}`}>
+      <div>
+        <strong>{verdict.tokenSymbol}</strong>
+        <span>{chain?.name ?? verdict.chainId}</span>
+      </div>
+      <span className="verdictState">{stateLabel}</span>
+      {verdict.detail ? <small>{verdict.detail}</small> : null}
+    </div>
+  );
+}
+
+function MiddlewareErrorPanel({
+  deployment,
+  error,
+}: {
+  deployment: DeploymentResponse;
+  error: MiddlewareErrorPayload;
+}) {
+  const verdicts = error.details?.sourceVerdicts ?? [];
+  const providerReasons = error.details?.providerReasons ?? [];
+  if (verdicts.length === 0 && providerReasons.length === 0) return null;
+
+  return (
+    <div className="structuredError">
+      <div>
+        <span className="eyebrow">Provider diagnostics</span>
+        <strong>{error.subcode ?? error.code ?? "Request details"}</strong>
+      </div>
+      {providerReasons.length > 0 ? (
+        <div className="providerReasons">
+          {providerReasons.map((reason) => (
+            <span key={reason}>{reason}</span>
+          ))}
+        </div>
+      ) : null}
+      {verdicts.length > 0 ? (
+        <SourceVerdictPanel deployment={deployment} verdicts={verdicts} />
+      ) : null}
+    </div>
+  );
+}
+
+function RoutePreview({
+  catalog,
+  form,
+}: {
+  catalog: DeploymentResponse | null;
+  form: IntentFormState;
+}) {
+  if (!catalog) return null;
+
+  const destinationChain = catalog.chains.find(
+    (chain) => chain.chainId === form.destinationChainId,
+  );
+  const destinationToken = destinationChain?.tokens.find(
+    (token) =>
+      token.address.toLowerCase() === form.destinationTokenAddress.toLowerCase(),
+  );
+  const destinationProviders = providerNames(
+    destinationToken?.asDestination ?? destinationChain?.asDestination,
+  );
+
+  const sourceDescriptions =
+    form.tradeType === "exactInput"
+      ? form.inputs.map((input) => {
+          const chain = catalog.chains.find((item) => item.chainId === input.chainId);
+          const token = chain?.tokens.find(
+            (item) => item.address.toLowerCase() === input.token.toLowerCase(),
+          );
+          return `${token?.symbol ?? "source"} on ${chain?.name ?? `EVM_${input.chainId}`}: ${providerNames(token?.asSource ?? chain?.asSource)}`;
+        })
+      : form.sources.length > 0
+        ? form.sources.map((source) => {
+            const chain = catalog.chains.find(
+              (item) => item.chainId === source.sourceChain,
+            );
+            const providers = source.tokens.flatMap((tokenAddress) => {
+              const token = chain?.tokens.find(
+                (item) => item.address.toLowerCase() === tokenAddress.toLowerCase(),
+              );
+              return token?.asSource ?? [];
+            });
+            return `${chain?.name ?? `EVM_${source.sourceChain}`}: ${providerNames(
+              providers.length > 0 ? providers : chain?.asSource,
+            )}`;
+          })
+        : [
+            `Automatic source search: ${catalog.chains.reduce(
+              (count, chain) =>
+                count + chain.tokens.filter((token) => token.asSource?.length).length,
+              0,
+            )} priced assets available`,
+          ];
+
+  return (
+    <div className="panel routePreview">
+      <div className="panelHeader">
+        <div>
+          <span className="eyebrow">Route preflight</span>
+          <h2>Eligibility under these constraints</h2>
+        </div>
+        <span className="muted">Quote remains authoritative</span>
+      </div>
+      <div className="routeCapabilityGrid">
+        <div>
+          <span className="label">Destination providers</span>
+          <strong>{destinationProviders}</strong>
+        </div>
+        <div>
+          <span className="label">Source candidates</span>
+          <div className="routeSourceList">
+            {sourceDescriptions.map((description) => (
+              <span key={description}>{description}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+      <p className="hint">
+        Empty provider lists mean the selected route is not served by that provider. A non-empty
+        list still needs a live quote because liquidity and fees can change.
+      </p>
     </div>
   );
 }
@@ -1239,6 +1444,15 @@ function shortAddress(value: string) {
   return value.length > 12
     ? `${value.slice(0, 6)}...${value.slice(-4)}`
     : value;
+}
+
+function providerNames(
+  providers?: Array<{ id: string }> | string[],
+): string {
+  const ids = [...new Set((providers ?? []).map((provider) =>
+    typeof provider === "string" ? provider : provider.id,
+  ))];
+  return ids.length > 0 ? ids.join(", ") : "No provider";
 }
 
 function shortHash(value: string) {

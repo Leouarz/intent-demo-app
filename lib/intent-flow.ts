@@ -3,8 +3,9 @@
 import type { Hex } from "viem";
 import {
   assertAddress,
+  buildBetterIntentCatalogQuery,
   buildIntentQuoteRequest,
-  readMiddlewareError,
+  middlewareApiError,
   type DeploymentChain,
   type DeploymentResponse,
   type IntentFormState,
@@ -13,6 +14,7 @@ import {
   type IntentStatusResponse,
   type IntentSubmitRequest,
   type IntentSubmitResponse,
+  type ProviderSupport,
   sortDeploymentCatalog,
 } from "./intent-utils";
 
@@ -28,19 +30,25 @@ type IntentCatalogChain = Omit<DeploymentChain, "chainId" | "tokens"> & {
     decimals: number;
     isNative: boolean;
     logo?: string;
-    providers?: Array<{ id: "nexus-v2" | "mayan"; currencyId?: number }>;
+    coingeckoId?: string;
+    asSource?: ProviderSupport[];
+    asDestination?: ProviderSupport[];
   }>;
 };
 
 // Loads the provider catalog used to populate chains and tokens.
-export async function fetchDeployment(): Promise<DeploymentResponse> {
-  const response = await fetch(`${MIDDLEWARE_URL}/api/v1/better-intent/chains`);
+export async function fetchDeployment(
+  query?: URLSearchParams,
+): Promise<DeploymentResponse> {
+  const queryString = query?.toString();
+  const url = `${MIDDLEWARE_URL}/api/v1/better-intent/chains${queryString ? `?${queryString}` : ""}`;
+  const response = await fetch(url);
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(readMiddlewareError(body, response.status));
+    throw middlewareApiError(body, response.status);
   }
   if (!Array.isArray(body)) {
-    throw new Error(readMiddlewareError(body, response.status));
+    throw middlewareApiError(body, response.status);
   }
 
   return sortDeploymentCatalog({
@@ -58,8 +66,14 @@ export async function fetchDeployment(): Promise<DeploymentResponse> {
             address: token.address,
             decimals: token.decimals,
             logo: token.logo,
-            providers: token.providers?.map((provider) => provider.id),
-            sourceKind: "bridge" as const,
+            coingeckoId: token.coingeckoId,
+            asSource: token.asSource ?? [],
+            asDestination: token.asDestination ?? [],
+            sourceKind: [...(token.asSource ?? []), ...(token.asDestination ?? [])].some(
+              (provider) => provider.id === "nexus-v2",
+            )
+              ? ("bridge" as const)
+              : ("swap" as const),
           })),
       };
     }),
@@ -76,14 +90,14 @@ export async function fetchIntentBalances(
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(readMiddlewareError(body, response.status));
+    throw middlewareApiError(body, response.status);
   }
   if (
     !body ||
     typeof body !== "object" ||
     !Array.isArray((body as IntentBalances).balances)
   ) {
-    throw new Error(readMiddlewareError(body, response.status));
+    throw middlewareApiError(body, response.status);
   }
   return body as IntentBalances;
 }
@@ -101,7 +115,7 @@ export async function requestIntentQuote(
 
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(readMiddlewareError(body, response.status));
+    throw middlewareApiError(body, response.status);
   }
   return body as IntentQuote;
 }
@@ -121,7 +135,7 @@ export async function submitIntent(
 
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(readMiddlewareError(body, response.status));
+    throw middlewareApiError(body, response.status);
   }
   return body as IntentSubmitResponse;
 }
@@ -135,9 +149,18 @@ export async function fetchIntentStatus(
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(readMiddlewareError(body, response.status));
+    throw middlewareApiError(body, response.status);
   }
   return body as IntentStatusResponse;
+}
+
+// Runs the new Better Intent route preflight for the current form. The returned catalog keeps
+// every entry, with asSource/asDestination narrowed to the selected route constraints.
+export async function fetchRouteCatalog(
+  deployment: DeploymentResponse,
+  form: IntentFormState,
+): Promise<DeploymentResponse> {
+  return fetchDeployment(buildBetterIntentCatalogQuery(deployment, form));
 }
 
 // Polls status until the intent reaches a terminal status.

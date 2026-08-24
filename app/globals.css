@@ -203,6 +203,33 @@ code {
   background: #d69e2e;
 }
 
+.structuredError {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--line));
+  border-radius: 8px;
+  background: #fffafa;
+  padding: 12px 14px;
+}
+
+.structuredError > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.providerReasons {
+  display: grid;
+  gap: 6px;
+}
+
+.providerReasons span,
+.routeSourceList span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .dot,
 .pulseDot {
   width: 10px;
@@ -574,6 +601,139 @@ code {
   gap: 14px;
 }
 
+.routePreview,
+.verdictPanel {
+  display: grid;
+  gap: 14px;
+}
+
+.routeCapabilityGrid {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+  gap: 12px;
+}
+
+.routeCapabilityGrid > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 10px;
+}
+
+.routeSourceList {
+  display: grid;
+  gap: 5px;
+}
+
+.verdictPanel {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.verdictSummary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.verdictSummary::-webkit-details-marker {
+  display: none;
+}
+
+.verdictSummary::after {
+  content: "+";
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.verdictPanel[open] .verdictSummary::after {
+  content: "−";
+}
+
+.verdictSummaryMeta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.verdictDisclosure {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.verdictPanel[open] .verdictDisclosure {
+  font-size: 0;
+}
+
+.verdictPanel[open] .verdictDisclosure::after {
+  content: "Hide details";
+  font-size: 12px;
+}
+
+.verdictPanel h3 {
+  margin: 0;
+  line-height: 1.15;
+}
+
+.verdictList {
+  display: grid;
+  gap: 7px;
+}
+
+.verdictRow {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) auto minmax(0, 1.4fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 9px 10px;
+}
+
+.verdictRow > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.verdictRow > div span,
+.verdictRow small {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.verdictState {
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.verdictRow.unroutable {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--line));
+  background: #fff5f5;
+}
+
+.verdictRow.unroutable .verdictState {
+  background: #ffe4e4;
+  color: var(--danger);
+}
+
+.verdictRow.unused .verdictState {
+  background: #fff4d6;
+  color: #975a16;
+}
+
 .pill {
   border-radius: 999px;
   background: var(--accent-soft);
@@ -845,7 +1005,9 @@ code {
 
   .formGrid,
   .selectRow,
-  .quoteInputRow {
+  .quoteInputRow,
+  .routeCapabilityGrid,
+  .verdictRow {
     grid-template-columns: 1fr;
   }
 

@@ -17,25 +17,37 @@ export const ZERO_ADDRESS =
 const TRANSACTION_RECEIPT_POLL_INTERVAL_MS = 1_500;
 const TRANSACTION_RECEIPT_TIMEOUT_MS = 180_000;
 
+export type ProviderId = "nexus-v2" | "mayan";
+
+export type ProviderSupport = {
+  id: ProviderId;
+  currencyId?: number;
+};
+
 export type DeploymentToken = {
   symbol: string;
   name: string;
   address: string;
   decimals: number;
   logo?: string;
+  coingeckoId?: string;
   sourceKind?: "bridge" | "swap";
   mayanEnabled?: boolean;
-  providers?: Array<"nexus-v2" | "mayan">;
+  asSource?: ProviderSupport[];
+  asDestination?: ProviderSupport[];
 };
 
 export type DeploymentChain = {
   chainId: number;
   name: string;
   logo?: string;
+  asSource?: ProviderId[];
+  asDestination?: ProviderId[];
   nativeCurrency: {
     symbol: string;
     name: string;
     decimals: number;
+    coingeckoId?: string;
     logo?: string;
   };
   tokens: DeploymentToken[];
@@ -88,6 +100,8 @@ export type SelectableToken = {
   native: boolean;
   sourceKind: "bridge" | "swap";
   mayanEnabled?: boolean;
+  asSource: ProviderSupport[];
+  asDestination: ProviderSupport[];
 };
 
 export type IntentBalance = {
@@ -168,9 +182,10 @@ export type IntentRff = {
 
 export type IntentQuote = {
   quoteId: Hex;
-  provider: "nexus-v2" | "mayan";
+  provider: ProviderId;
   tradeType: TradeType;
   input: IntentInputLeg[];
+  sourceVerdicts: SourceVerdict[];
   output: {
     chainId: string; // "EVM_<chainId>"
     tokenAddress: Hex;
@@ -239,7 +254,7 @@ export type IntentLifecycleStatus =
   | "expired";
 
 export type IntentSubmitRequest = {
-  provider?: "nexus-v2" | "mayan";
+  provider?: ProviderId;
   rff: IntentRff;
   rffSignature: Hex;
   nativeTxReceipts?: Array<{ sourceIndex: number; txHash: Hex }>;
@@ -252,11 +267,58 @@ export type IntentSubmitResponse = {
 
 export type IntentStatusResponse = {
   quoteId: Hex;
-  provider: "nexus-v2" | "mayan";
+  provider: ProviderId;
   status: IntentLifecycleStatus;
-  substatus: string;
+  substatus: IntentSubstatus;
   rff: IntentRff;
 };
+
+export type IntentSubstatus =
+  | "awaiting_source_deposit"
+  | "awaiting_remaining_legs"
+  | "awaiting_destination_fulfillment"
+  | "completed"
+  | "expired"
+  | "leg_error";
+
+export type SourceVerdict = {
+  chainId: string;
+  tokenAddress: Hex;
+  tokenSymbol: string;
+  state: "selected" | "unused" | "unroutable";
+  reason?: string;
+  detail?: string;
+};
+
+export type MiddlewareErrorPayload = {
+  code?: string;
+  message?: string;
+  errorId?: string;
+  subcode?: string;
+  details?: {
+    sourceVerdicts?: SourceVerdict[];
+    providerReasons?: string[];
+    shortfalls?: Array<{
+      chainId: number;
+      address: string;
+      required: string;
+      actual: string;
+    }>;
+    [key: string]: unknown;
+  };
+};
+
+export class MiddlewareApiError extends Error {
+  readonly status: number;
+  readonly payload: MiddlewareErrorPayload;
+
+  constructor(payload: MiddlewareErrorPayload, status: number) {
+    super(formatMiddlewareError(payload, status));
+    this.name = "MiddlewareApiError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
 
 export type IntentExecutionResult = {
   approvals: Array<IntentQuote["allowances"][number] & { hash: Hex }>;
@@ -356,6 +418,8 @@ export function getTokensForChain(
       logo: chain.nativeCurrency.logo,
       native: true,
       sourceKind: "bridge",
+      asSource: (chain.asSource ?? []).map((id) => ({ id })),
+      asDestination: (chain.asDestination ?? []).map((id) => ({ id })),
     },
     ...chain.tokens.map((token) => ({
       chainId: chain.chainId,
@@ -367,6 +431,8 @@ export function getTokensForChain(
       native: false,
       sourceKind: token.sourceKind ?? "bridge",
       mayanEnabled: token.mayanEnabled,
+      asSource: token.asSource ?? [],
+      asDestination: token.asDestination ?? [],
     })),
   ];
   return tokens.sort(
@@ -518,6 +584,60 @@ export function buildIntentQuoteRequest(
   };
 
   return JSON.parse(JSON.stringify(request)) as unknown;
+}
+
+/**
+ * Builds the Better Intent catalogue query for the route currently shown in the demo.
+ * The catalogue is a preflight: it can narrow provider eligibility, but the quote remains
+ * authoritative because provider liquidity and live fees can change.
+ */
+export function buildBetterIntentCatalogQuery(
+  deployment: DeploymentResponse,
+  form: IntentFormState,
+): URLSearchParams {
+  const request = buildIntentQuoteRequest(deployment, form) as {
+    preferredProviders?: ProviderId[];
+    input?: Array<{ chainId: string; token: Hex; amount: string }>;
+    output: { chainId: string; token: Hex; amount?: string };
+    sources?: Array<{ chainId: string; tokens?: Hex[] }>;
+  };
+  const query = new URLSearchParams();
+  const append = (name: string, value: string | undefined) => {
+    if (value !== undefined) query.append(name, value);
+  };
+
+  append("provider", request.preferredProviders?.[0]);
+  append("destinationChain", request.output.chainId);
+  append("destinationToken", request.output.token);
+  append("destinationAmount", request.output.amount);
+
+  for (const input of request.input ?? []) {
+    append("sourceChain", input.chainId);
+    append("sourceToken", input.token);
+    append("sourceAmount", input.amount);
+  }
+
+  const sources = request.sources ?? [];
+  const hasUnconstrainedSource = sources.some((source) => !source.tokens?.length);
+  const hasTokenConstrainedSource = sources.some((source) => Boolean(source.tokens?.length));
+
+  // The middleware pairs sourceChain/sourceToken by position. It cannot express a
+  // mixed list where one source is an unconstrained chain and another is token-specific,
+  // so leave this optional preflight unconstrained rather than sending a mismatched query.
+  if (!(hasUnconstrainedSource && hasTokenConstrainedSource)) {
+    for (const source of sources) {
+      if (!source.tokens?.length) {
+        append("sourceChain", source.chainId);
+        continue;
+      }
+      for (const token of source.tokens) {
+        append("sourceChain", source.chainId);
+        append("sourceToken", token);
+      }
+    }
+  }
+
+  return query;
 }
 
 // Executes the wallet portion of a quote: approvals, intent signature, and native txs.
@@ -744,16 +864,45 @@ export function assertAddress(value: string, label: string): Hex {
   return value as Hex;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function normalizeMiddlewareError(
+  body: unknown,
+  status: number,
+): MiddlewareErrorPayload {
+  if (isRecord(body)) {
+    return {
+      ...(typeof body.code === "string" ? { code: body.code } : {}),
+      ...(typeof body.message === "string" ? { message: body.message } : {}),
+      ...(typeof body.errorId === "string" ? { errorId: body.errorId } : {}),
+      ...(typeof body.subcode === "string" ? { subcode: body.subcode } : {}),
+      ...(isRecord(body.details) ? { details: body.details as MiddlewareErrorPayload["details"] } : {}),
+    };
+  }
+  return { code: `HTTP_${status}`, message: typeof body === "string" ? body : undefined };
+}
+
+function formatMiddlewareError(payload: MiddlewareErrorPayload, status: number): string {
+  const label = payload.subcode ?? payload.code ?? `HTTP_${status}`;
+  const message = payload.message ?? `Request failed with HTTP ${status}`;
+  return `${label}: ${message}`;
+}
+
+export function getMiddlewareErrorPayload(error: unknown): MiddlewareErrorPayload | null {
+  return error instanceof MiddlewareApiError ? error.payload : null;
+}
+
+// Creates an error that preserves Better Intent's structured source verdicts and provider reasons.
+export function middlewareApiError(body: unknown, status: number): MiddlewareApiError {
+  return new MiddlewareApiError(normalizeMiddlewareError(body, status), status);
+}
+
 // Reads a useful error from middleware responses.
 export function readMiddlewareError(body: unknown, status: number) {
-  if (body && typeof body === "object") {
-    const record = body as Record<string, unknown>;
-    if (typeof record.error === "string") return record.error;
-    if (typeof record.message === "string") return record.message;
-    if (typeof record.code === "string") return record.code;
-  }
-  if (typeof body === "string" && body.trim()) return body;
-  return `Request failed with HTTP ${status}`;
+  if (body instanceof MiddlewareApiError) return body.message;
+  return new MiddlewareApiError(normalizeMiddlewareError(body, status), status).message;
 }
 
 // Picks the first chain from a deployment response or throws if it is empty.
