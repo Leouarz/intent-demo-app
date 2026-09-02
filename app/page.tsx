@@ -322,6 +322,7 @@ export default function Page() {
     ? getToken(deployment, sourceLeg.chainId, sourceLeg.token)
     : null;
   const canQuote = Boolean(effectiveForm.sender && !busy);
+  const relaySelected = form.provider === "relay";
 
   return (
     <main className="page">
@@ -611,6 +612,7 @@ export default function Page() {
                       <option value="auto">Auto (best eligible)</option>
                       <option value="nexus-v2">nexus-v2</option>
                       <option value="mayan">mayan</option>
+                      <option value="relay">relay</option>
                     </select>
                   </label>
                   <label className="field">
@@ -631,12 +633,22 @@ export default function Page() {
                     <input
                       inputMode="decimal"
                       value={form.gasDropAmount}
+                      placeholder="0.0003"
                       onChange={(event) =>
                         patchForm({ gasDropAmount: event.target.value })
                       }
                     />
                   </label>
                 </div>
+
+                {relaySelected ? (
+                  <p className="hint">
+                    Relay gas drops use the destination native token amount. Relay converts it to
+                    USD and caps the provider-managed top-up at $2.00. With exact in, the gas drop
+                    reduces the token output; with exact out, it is additional. Exact-out source
+                    preferences are considered in the order listed and may be combined.
+                  </p>
+                ) : null}
 
                 <div className="advancedBlock">
                   {isExactInput ? (
@@ -666,6 +678,7 @@ export default function Page() {
           <QuotePanel
             quote={quote}
             deployment={deployment}
+            form={effectiveForm}
             onRun={runWalletFlow}
             onLog={() => {
               if (quote) {
@@ -822,6 +835,7 @@ function InputSummary({
 function QuotePanel({
   quote,
   deployment,
+  form,
   onRun,
   onLog,
   busy,
@@ -829,6 +843,7 @@ function QuotePanel({
 }: {
   quote: IntentQuote | null;
   deployment: DeploymentResponse;
+  form: IntentFormState;
   onRun: () => void;
   onLog: () => void;
   busy: boolean;
@@ -854,6 +869,14 @@ function QuotePanel({
         </div>
         <span className="pill">{quote.tradeType}</span>
       </div>
+      <p className="hint">
+        {quote.tradeType === "exactOutput"
+          ? "The destination token amount is exact; any requested gas drop is additional."
+          : "The destination token amount is the quoted result after fees and any gas drop."}
+        {form.gasDropAmount.trim()
+          ? ` Gas drop: ${form.gasDropAmount.trim()} ${getChain(deployment, form.destinationChainId).nativeCurrency.symbol}.`
+          : " No gas drop requested."}
+      </p>
       <dl className="quoteList">
         <div>
           <dt>Output</dt>

@@ -17,7 +17,7 @@ export const ZERO_ADDRESS =
 const TRANSACTION_RECEIPT_POLL_INTERVAL_MS = 1_500;
 const TRANSACTION_RECEIPT_TIMEOUT_MS = 180_000;
 
-export type ProviderId = "nexus-v2" | "mayan";
+export type ProviderId = "nexus-v2" | "mayan" | "relay";
 
 export type ProviderSupport = {
   id: ProviderId;
@@ -114,7 +114,7 @@ export type IntentBalance = {
   isNative: boolean;
   logo?: string;
   coingeckoId?: string;
-  providers: Array<{ id: "nexus-v2" | "mayan"; currencyId?: number }>;
+  providers: Array<{ id: ProviderId; currencyId?: number }>;
   balance: string;
   valueUsd: number | null;
   priceSource: "oracle" | "indexer" | null;
@@ -140,7 +140,7 @@ export type InputLeg = {
 export type TradeType = "exactInput" | "exactOutput";
 
 // "auto" maps to an empty preferredProviders array (best of all).
-export type ProviderChoice = "auto" | "nexus-v2" | "mayan";
+export type ProviderChoice = "auto" | ProviderId;
 
 export type IntentFormState = {
   sender: Hex;
