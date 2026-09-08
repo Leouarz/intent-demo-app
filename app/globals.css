@@ -766,6 +766,28 @@ code {
   font-weight: 650;
 }
 
+.quoteMetric,
+.quoteFeeBreakdown {
+  display: grid;
+  gap: 2px;
+}
+
+.quoteUsd {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.quoteFeeBreakdown {
+  gap: 4px;
+}
+
+.quoteInputFee {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .quoteInputs {
   display: grid;
   gap: 8px;
@@ -802,6 +824,12 @@ code {
 .quoteInputAmounts span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.quoteInputAmounts .quoteUsd {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .quoteInputAmounts {

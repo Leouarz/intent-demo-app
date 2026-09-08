@@ -880,24 +880,30 @@ function QuotePanel({
       <dl className="quoteList">
         <div>
           <dt>Output</dt>
-          <dd>
-            {formatQuoteAmount(
-              deployment,
-              quote.output.chainId,
-              quote.output.tokenAddress,
-              quote.output.amount,
-            )}
+          <dd className="quoteMetric">
+            <span>
+              {formatQuoteAmount(
+                deployment,
+                quote.output.chainId,
+                quote.output.tokenAddress,
+                quote.output.amount,
+              )}
+            </span>
+            <span className="quoteUsd">≈ ${quote.output.amountUsd}</span>
           </dd>
         </div>
         <div>
           <dt>Min received</dt>
-          <dd>
-            {formatQuoteAmount(
-              deployment,
-              quote.output.chainId,
-              quote.output.tokenAddress,
-              quote.minAmountOut,
-            )}
+          <dd className="quoteMetric">
+            <span>
+              {formatQuoteAmount(
+                deployment,
+                quote.output.chainId,
+                quote.output.tokenAddress,
+                quote.minAmountOut,
+              )}
+            </span>
+            <span className="quoteUsd">≈ ${quote.minAmountOutUsd}</span>
           </dd>
         </div>
         <div>
@@ -914,8 +920,23 @@ function QuotePanel({
         </div>
         <div>
           <dt>Fees</dt>
-          <dd>
-            {quote.fees.deposit} deposit · {quote.fees.fulfillment} fulfillment
+          <dd className="quoteFeeBreakdown">
+            <span>
+              Deposit: {quote.fees.deposit} (
+              <span className="quoteUsd">${quote.fees.depositUsd}</span>)
+            </span>
+            <span>
+              Fulfillment: {quote.fees.fulfillment} (
+              <span className="quoteUsd">${quote.fees.fulfillmentUsd}</span>)
+            </span>
+            <span>
+              Protocol: {quote.fees.protocol} (
+              <span className="quoteUsd">${quote.fees.protocolUsd}</span>)
+            </span>
+            <span>
+              Solver: {quote.fees.solver} (
+              <span className="quoteUsd">${quote.fees.solverUsd}</span>)
+            </span>
           </dd>
         </div>
       </dl>
@@ -949,12 +970,18 @@ function QuotePanel({
                   {formatBalanceAmount(input.amount, token.decimals)}{" "}
                   {token.symbol}
                 </strong>
+                <span className="quoteUsd">≈ ${input.amountUsd}</span>
                 <span>
                   {quote.tradeType === "exactInput"
                     ? "Total wallet amount: "
                     : "Total with fee: "}
                   {formatBalanceAmount(input.totalRequired, token.decimals)}{" "}
                   {token.symbol}
+                </span>
+                <span className="quoteUsd">≈ ${input.totalRequiredUsd}</span>
+                <span className="quoteInputFee">
+                  Deposit fee: {formatBalanceAmount(input.depositFee, token.decimals)} {token.symbol}
+                  (≈ ${input.depositFeeUsd})
                 </span>
               </div>
             </div>

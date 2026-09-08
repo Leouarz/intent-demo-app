@@ -161,8 +161,11 @@ export type IntentInputLeg = {
   tokenAddress: Hex;
   tokenSymbol: string;
   amount: string;
+  amountUsd: string;
   depositFee: string;
+  depositFeeUsd: string;
   totalRequired: string;
+  totalRequiredUsd: string;
 };
 
 export type RoutingPayload = {
@@ -190,14 +193,19 @@ export type IntentQuote = {
     chainId: string; // "EVM_<chainId>"
     tokenAddress: Hex;
     amount: string;
+    amountUsd: string;
   };
   minAmountOut: string;
+  minAmountOutUsd: string;
   fees: {
     deposit: string;
+    depositUsd: string;
     fulfillment: string;
+    fulfillmentUsd: string;
     protocol: string;
+    protocolUsd: string;
     solver: string;
-    caGas: string;
+    solverUsd: string;
   };
   expiry: string;
   rff: IntentRff;
