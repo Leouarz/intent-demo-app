@@ -21,14 +21,16 @@ export type ProviderId = "nexus-v2" | "mayan" | "relay";
 
 export type ProviderSupport = {
   id: ProviderId;
-  currencyId?: number;
+  currencyId?: number | string;
 };
 
 export type DeploymentToken = {
+  chainId: number;
   symbol: string;
   name: string;
   address: string;
   decimals: number;
+  isNative: boolean;
   logo?: string;
   coingeckoId?: string;
   sourceKind?: "bridge" | "swap";
@@ -50,7 +52,6 @@ export type DeploymentChain = {
     coingeckoId?: string;
     logo?: string;
   };
-  tokens: DeploymentToken[];
 };
 
 export type DeploymentResponse = {
@@ -58,6 +59,7 @@ export type DeploymentResponse = {
   mayanEnabled?: boolean;
   mayanThresholdUsd?: number;
   chains: DeploymentChain[];
+  tokens: DeploymentToken[];
 };
 
 function alphabetical(left: string, right: string): number {
@@ -82,11 +84,11 @@ export function sortDeploymentCatalog(
   return {
     ...deployment,
     chains: [...deployment.chains]
-      .sort(compareDeploymentChains)
-      .map((chain) => ({
-        ...chain,
-        tokens: [...chain.tokens].sort(compareDeploymentTokens),
-      })),
+      .sort(compareDeploymentChains),
+    tokens: [...deployment.tokens].sort(
+      (left, right) =>
+        left.chainId - right.chainId || compareDeploymentTokens(left, right),
+    ),
   };
 }
 
@@ -114,10 +116,10 @@ export type IntentBalance = {
   isNative: boolean;
   logo?: string;
   coingeckoId?: string;
-  providers: Array<{ id: ProviderId; currencyId?: number }>;
+  providers: Array<{ id: ProviderId; currencyId?: number | string }>;
   balance: string;
   valueUsd: number | null;
-  priceSource: "oracle" | "indexer" | null;
+  priceSource: "oracle" | "coingecko" | "relay" | "indexer" | null;
   usable: boolean;
 };
 
@@ -398,6 +400,19 @@ export function buildInitialIntentForm(
   };
 }
 
+function deploymentTokenKey(token: Pick<DeploymentToken, "chainId" | "address">): string {
+  return `${token.chainId}:${token.address.toLowerCase()}`;
+}
+
+export function mergeDeploymentTokens(
+  current: DeploymentToken[],
+  incoming: DeploymentToken[],
+): DeploymentToken[] {
+  const tokens = new Map(current.map((token) => [deploymentTokenKey(token), token]));
+  for (const token of incoming) tokens.set(deploymentTokenKey(token), token);
+  return [...tokens.values()];
+}
+
 // Finds the display chain configuration for a chain id.
 export function getChain(
   deployment: DeploymentResponse,
@@ -410,7 +425,7 @@ export function getChain(
   return chain;
 }
 
-// Lists the selectable native token and every provider-catalog token for a chain.
+// Lists the selectable native token and every loaded provider-catalog token for a chain.
 export function getTokensForChain(
   deployment: DeploymentResponse,
   chainId: number,
@@ -429,7 +444,9 @@ export function getTokensForChain(
       asSource: (chain.asSource ?? []).map((id) => ({ id })),
       asDestination: (chain.asDestination ?? []).map((id) => ({ id })),
     },
-    ...chain.tokens.map((token) => ({
+    ...deployment.tokens
+      .filter((token) => token.chainId === chain.chainId && !token.isNative)
+      .map((token) => ({
       chainId: chain.chainId,
       symbol: token.symbol,
       name: token.name,
@@ -441,14 +458,9 @@ export function getTokensForChain(
       mayanEnabled: token.mayanEnabled,
       asSource: token.asSource ?? [],
       asDestination: token.asDestination ?? [],
-    })),
+      })),
   ];
-  return tokens.sort(
-    (left, right) =>
-      alphabetical(left.symbol, right.symbol) ||
-      alphabetical(left.name, right.name) ||
-      left.address.localeCompare(right.address),
-  );
+  return tokens;
 }
 
 // Finds token metadata needed to convert a human amount into raw units.

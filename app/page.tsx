@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { SourceSelector } from "../components/source-selector";
+import { TokenSelector } from "../components/token-selector";
 import {
   MIDDLEWARE_URL,
   fetchDeployment,
   fetchIntentBalances,
+  fetchIntentTokens,
   fetchRouteCatalog,
   pollIntentStatus,
   requestIntentQuote,
@@ -22,7 +24,9 @@ import {
   getMiddlewareErrorPayload,
   getToken,
   getTokensForChain,
+  mergeDeploymentTokens,
   type DeploymentChain,
+  type DeploymentToken,
   type DeploymentResponse,
   type Hex,
   type InputLeg,
@@ -67,10 +71,17 @@ export default function Page() {
 
     async function loadDeployment() {
       try {
-        const nextDeployment = await fetchDeployment();
+        const [nextDeployment, initialTokens] = await Promise.all([
+          fetchDeployment(),
+          fetchIntentTokens({ limit: 100 }),
+        ]);
         if (cancelled) return;
-        setDeployment(nextDeployment);
-        setForm((current) => current ?? buildInitialIntentForm(nextDeployment));
+        const hydratedDeployment = {
+          ...nextDeployment,
+          tokens: mergeDeploymentTokens(nextDeployment.tokens, initialTokens),
+        };
+        setDeployment(hydratedDeployment);
+        setForm((current) => current ?? buildInitialIntentForm(hydratedDeployment));
         setStructuredError(null);
         setStatus("Ready to quote intents");
       } catch (nextError) {
@@ -88,21 +99,20 @@ export default function Page() {
     };
   }, []);
 
+  const registerTokens = useCallback((tokens: DeploymentToken[]) => {
+    setDeployment((current) =>
+      current
+        ? { ...current, tokens: mergeDeploymentTokens(current.tokens, tokens) }
+        : current,
+    );
+  }, []);
+
   const effectiveForm = useMemo(() => {
     if (!deployment || !form) return null;
     return buildEffectiveForm(deployment, form, advancedOpen);
   }, [deployment, form, advancedOpen]);
 
-  const destinationTokens = useMemo(() => {
-    if (!deployment || !form) return [];
-    return getTokensForChain(deployment, form.destinationChainId);
-  }, [deployment, form]);
-
   const sourceLeg = form?.inputs[0] ?? null;
-  const sourceTokens = useMemo(() => {
-    if (!deployment || !sourceLeg) return [];
-    return getTokensForChain(deployment, sourceLeg.chainId);
-  }, [deployment, sourceLeg]);
 
   const requestPreview = useMemo(() => {
     if (!deployment || !effectiveForm) return "";
@@ -421,18 +431,13 @@ export default function Page() {
                           </option>
                         ))}
                       </select>
-                      <select
+                      <TokenSelector
+                        deployment={deployment}
+                        chainId={sourceLeg.chainId}
                         value={sourceLeg.token}
-                        onChange={(event) =>
-                          setSimpleInput({ token: event.target.value as Hex })
-                        }
-                      >
-                        {sourceTokens.map((token) => (
-                          <option key={token.address} value={token.address}>
-                            {tokenOptionLabel(token)}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(token) => setSimpleInput({ token })}
+                        onTokensLoaded={registerTokens}
+                      />
                     </div>
                   </>
                 ) : isExactInput ? (
@@ -505,20 +510,15 @@ export default function Page() {
                       </option>
                     ))}
                   </select>
-                  <select
+                  <TokenSelector
+                    deployment={deployment}
+                    chainId={form.destinationChainId}
                     value={form.destinationTokenAddress}
-                    onChange={(event) =>
-                      patchForm({
-                        destinationTokenAddress: event.target.value as Hex,
-                      })
+                    onChange={(token) =>
+                      patchForm({ destinationTokenAddress: token })
                     }
-                  >
-                    {destinationTokens.map((token) => (
-                      <option key={token.address} value={token.address}>
-                        {tokenOptionLabel(token)}
-                      </option>
-                    ))}
-                  </select>
+                    onTokensLoaded={registerTokens}
+                  />
                 </div>
               </div>
             </div>
@@ -658,6 +658,7 @@ export default function Page() {
                         deployment={deployment}
                         value={form.inputs}
                         onChange={(inputs) => patchForm({ inputs })}
+                        onTokensLoaded={registerTokens}
                       />
                     </>
                   ) : (
@@ -667,6 +668,7 @@ export default function Page() {
                         deployment={deployment}
                         value={form.sources}
                         onChange={(sources) => patchForm({ sources })}
+                        onTokensLoaded={registerTokens}
                       />
                     </>
                   )}
@@ -691,6 +693,7 @@ export default function Page() {
           />
           <RoutePreview
             catalog={routeCatalog}
+            deployment={deployment}
             form={effectiveForm}
           />
           <StatusPanel
@@ -779,11 +782,6 @@ function SelectionSummary({
       </div>
     </div>
   );
-}
-
-function tokenOptionLabel(token: SelectableToken): string {
-  if (token.native) return `${token.symbol} · native`;
-  return `${token.symbol} · ${shortAddress(token.address)} · ${token.name}`;
 }
 
 function InputSummary({
@@ -1098,9 +1096,11 @@ function MiddlewareErrorPanel({
 
 function RoutePreview({
   catalog,
+  deployment,
   form,
 }: {
   catalog: DeploymentResponse | null;
+  deployment: DeploymentResponse;
   form: IntentFormState;
 }) {
   if (!catalog) return null;
@@ -1108,44 +1108,26 @@ function RoutePreview({
   const destinationChain = catalog.chains.find(
     (chain) => chain.chainId === form.destinationChainId,
   );
-  const destinationToken = destinationChain?.tokens.find(
-    (token) =>
-      token.address.toLowerCase() === form.destinationTokenAddress.toLowerCase(),
-  );
-  const destinationProviders = providerNames(
-    destinationToken?.asDestination ?? destinationChain?.asDestination,
-  );
+  const destinationProviders = providerNames(destinationChain?.asDestination);
 
   const sourceDescriptions =
     form.tradeType === "exactInput"
       ? form.inputs.map((input) => {
           const chain = catalog.chains.find((item) => item.chainId === input.chainId);
-          const token = chain?.tokens.find(
-            (item) => item.address.toLowerCase() === input.token.toLowerCase(),
-          );
-          return `${token?.symbol ?? "source"} on ${chain?.name ?? `EVM_${input.chainId}`}: ${providerNames(token?.asSource ?? chain?.asSource)}`;
+          const token = getToken(deployment, input.chainId, input.token);
+          return `${token.symbol} on ${chain?.name ?? `EVM_${input.chainId}`}: ${providerNames(chain?.asSource)}`;
         })
       : form.sources.length > 0
         ? form.sources.map((source) => {
             const chain = catalog.chains.find(
               (item) => item.chainId === source.sourceChain,
             );
-            const providers = source.tokens.flatMap((tokenAddress) => {
-              const token = chain?.tokens.find(
-                (item) => item.address.toLowerCase() === tokenAddress.toLowerCase(),
-              );
-              return token?.asSource ?? [];
-            });
             return `${chain?.name ?? `EVM_${source.sourceChain}`}: ${providerNames(
-              providers.length > 0 ? providers : chain?.asSource,
+              chain?.asSource,
             )}`;
           })
         : [
-            `Automatic source search: ${catalog.chains.reduce(
-              (count, chain) =>
-                count + chain.tokens.filter((token) => token.asSource?.length).length,
-              0,
-            )} priced assets available`,
+            "Automatic source search across provider-supported balances",
           ];
 
   return (
@@ -1233,10 +1215,12 @@ function InputsEditor({
   deployment,
   value,
   onChange,
+  onTokensLoaded,
 }: {
   deployment: DeploymentResponse;
   value: InputLeg[];
   onChange: (next: InputLeg[]) => void;
+  onTokensLoaded: (tokens: DeploymentToken[]) => void;
 }) {
   function addLeg() {
     onChange([...value, defaultInputLeg(deployment)]);
@@ -1262,7 +1246,6 @@ function InputsEditor({
 
       {value.map((leg, index) => {
         const chain = getChain(deployment, leg.chainId);
-        const tokens = getTokensForChain(deployment, leg.chainId);
         const token = getToken(deployment, leg.chainId, leg.token);
         return (
           <div className="sourceCard" key={`${leg.chainId}-${index}`}>
@@ -1306,18 +1289,13 @@ function InputsEditor({
               </label>
               <label className="field">
                 <span className="label">Token</span>
-                <select
+                <TokenSelector
+                  deployment={deployment}
+                  chainId={leg.chainId}
                   value={leg.token}
-                  onChange={(event) =>
-                    updateLeg(index, { token: event.target.value as Hex })
-                  }
-                >
-                  {tokens.map((nextToken) => (
-                    <option key={nextToken.address} value={nextToken.address}>
-                      {tokenOptionLabel(nextToken)}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(address) => updateLeg(index, { token: address })}
+                  onTokensLoaded={onTokensLoaded}
+                />
               </label>
             </div>
           </div>
