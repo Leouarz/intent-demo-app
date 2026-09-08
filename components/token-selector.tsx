@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fetchIntentTokens } from "../lib/intent-flow";
 import {
   getTokensForChain,
+  getUsableLogo,
   type DeploymentResponse,
   type DeploymentToken,
   type Hex,
@@ -28,12 +30,19 @@ export function TokenSelector({
   placeholder = "Select token",
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [remoteTokens, setRemoteTokens] = useState<DeploymentToken[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
 
   const options = useMemo(() => {
     const loadedDeployment = {
@@ -95,10 +104,62 @@ export function TokenSelector({
   useEffect(() => {
     if (!open) return;
     function closeOnOutside(event: MouseEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (
+        !rootRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
+        setOpen(false);
+      }
     }
     document.addEventListener("mousedown", closeOnOutside);
     return () => document.removeEventListener("mousedown", closeOnOutside);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuPosition(null);
+      return;
+    }
+
+    function updateMenuPosition() {
+      const trigger = rootRef.current?.getBoundingClientRect();
+      if (!trigger) return;
+
+      const viewportPadding = 12;
+      const width = Math.min(
+        Math.max(trigger.width, 320),
+        window.innerWidth - viewportPadding * 2,
+      );
+      const left = Math.min(
+        Math.max(trigger.right - width, viewportPadding),
+        window.innerWidth - width - viewportPadding,
+      );
+      const spaceBelow = window.innerHeight - trigger.bottom - viewportPadding;
+      const spaceAbove = trigger.top - viewportPadding;
+      const opensUp = spaceBelow < 260 && spaceAbove > spaceBelow;
+      const maxHeight = Math.max(
+        160,
+        Math.min(420, opensUp ? spaceAbove : spaceBelow),
+      );
+
+      setMenuPosition({
+        top: opensUp
+          ? Math.max(viewportPadding, trigger.top - maxHeight - 6)
+          : trigger.bottom + 6,
+        left,
+        width,
+        maxHeight,
+      });
+    }
+
+    updateMenuPosition();
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+    };
   }, [open]);
 
   function choose(token: SelectableToken) {
@@ -132,39 +193,61 @@ export function TokenSelector({
       </button>
 
       {open ? (
-        <div className="tokenSelectMenu">
-          <input
-            autoFocus
-            value={search}
-            placeholder="Search symbol, name, or contract"
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          {loading ? <div className="tokenSelectMessage">Searching…</div> : null}
-          {loadError ? <div className="tokenSelectError">{loadError}</div> : null}
-          <div className="tokenSelectOptions">
-            {visibleOptions.map((token) => (
-              <button
-                type="button"
-                className="tokenSelectOption"
-                key={`${token.chainId}-${token.address}`}
-                onClick={() => choose(token)}
+        typeof document !== "undefined"
+          ? createPortal(
+              <div
+                className="tokenSelectMenu"
+                ref={menuRef}
+                style={
+                  menuPosition
+                    ? {
+                        top: menuPosition.top,
+                        left: menuPosition.left,
+                        width: menuPosition.width,
+                        maxHeight: menuPosition.maxHeight,
+                      }
+                    : { visibility: "hidden" }
+                }
               >
-                <TokenLogo src={token.logo} label={token.symbol} />
-                <span className="tokenSelectValue">
-                  <strong>{token.symbol}</strong>
-                  <small>
-                    {token.native
-                      ? "Native token"
-                      : `${token.name} · ${shortAddress(token.address)}`}
-                  </small>
-                </span>
-              </button>
-            ))}
-          </div>
-          {!loading && visibleOptions.length === 0 ? (
-            <div className="tokenSelectMessage">No matching tokens.</div>
-          ) : null}
-        </div>
+                <input
+                  autoFocus
+                  value={search}
+                  placeholder="Search symbol, name, or contract"
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+                {loading ? (
+                  <div className="tokenSelectMessage">Searching…</div>
+                ) : null}
+                {loadError ? (
+                  <div className="tokenSelectError">{loadError}</div>
+                ) : null}
+                <div className="tokenSelectOptions">
+                  {visibleOptions.map((token) => (
+                    <button
+                      type="button"
+                      className="tokenSelectOption"
+                      key={`${token.chainId}-${token.address}`}
+                      onClick={() => choose(token)}
+                    >
+                      <TokenLogo src={token.logo} label={token.symbol} />
+                      <span className="tokenSelectValue">
+                        <strong>{token.symbol}</strong>
+                        <small>
+                          {token.native
+                            ? "Native token"
+                            : `${token.name} · ${shortAddress(token.address)}`}
+                        </small>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {!loading && visibleOptions.length === 0 ? (
+                  <div className="tokenSelectMessage">No matching tokens.</div>
+                ) : null}
+              </div>,
+              document.body,
+            )
+          : null
       ) : null}
     </div>
   );
@@ -172,10 +255,11 @@ export function TokenSelector({
 
 function TokenLogo({ src, label }: { src?: string; label: string }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) {
+  const usableSrc = getUsableLogo(src);
+  if (!usableSrc || failed) {
     return <span className="logoFallback">{label.slice(0, 1).toUpperCase()}</span>;
   }
-  return <img className="logo" src={src} alt="" onError={() => setFailed(true)} />;
+  return <img className="logo" src={usableSrc} alt="" onError={() => setFailed(true)} />;
 }
 
 function shortAddress(value: string): string {

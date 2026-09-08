@@ -412,14 +412,12 @@ code {
 }
 
 .tokenSelectMenu {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 6px);
-  right: 0;
-  left: 0;
-  display: grid;
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  max-height: 360px;
+  max-height: min(420px, calc(100vh - 24px));
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -429,13 +427,18 @@ code {
 }
 
 .tokenSelectMenu > input {
+  flex: 0 0 auto;
   min-height: 38px;
+  min-width: 0;
 }
 
 .tokenSelectOptions {
   display: grid;
+  flex: 1 1 auto;
   gap: 2px;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .tokenSelectOption {
@@ -580,7 +583,7 @@ code {
   display: grid;
   gap: 16px;
   padding: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .advancedPanel.open {

@@ -24,6 +24,7 @@ import {
   getMiddlewareErrorPayload,
   getToken,
   getTokensForChain,
+  getUsableLogo,
   mergeDeploymentTokens,
   type DeploymentChain,
   type DeploymentToken,
@@ -1407,13 +1408,19 @@ function BalanceTokenRow({ balance }: { balance: IntentBalance }) {
 
 function Logo({ src, label }: { src?: string; label: string }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) {
+  const usableSrc = getUsableLogo(src);
+  if (!usableSrc || failed) {
     return (
       <span className="logoFallback">{label.slice(0, 1).toUpperCase()}</span>
     );
   }
   return (
-    <img className="logo" src={src} alt="" onError={() => setFailed(true)} />
+    <img
+      className="logo"
+      src={usableSrc}
+      alt=""
+      onError={() => setFailed(true)}
+    />
   );
 }
 

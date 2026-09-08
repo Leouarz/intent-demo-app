@@ -62,6 +62,13 @@ export type DeploymentResponse = {
   tokens: DeploymentToken[];
 };
 
+export function getUsableLogo(src?: string): string | undefined {
+  if (!src || /(?:^|\/)missing_large\.png(?:$|[?#])/i.test(src)) {
+    return undefined;
+  }
+  return src;
+}
+
 function alphabetical(left: string, right: string): number {
   return left.localeCompare(right, undefined, { sensitivity: "base" });
 }
