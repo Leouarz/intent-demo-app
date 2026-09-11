@@ -5,8 +5,10 @@ import {
   assertAddress,
   buildBetterIntentCatalogQuery,
   buildIntentQuoteRequest,
+  mergeDeploymentTokens,
   middlewareApiError,
   type DeploymentChain,
+  type DeploymentToken,
   type DeploymentResponse,
   type IntentFormState,
   type IntentBalances,
@@ -21,28 +23,44 @@ import {
 export const MIDDLEWARE_URL =
   process.env.NEXT_PUBLIC_MIDDLEWARE_URL ?? "http://localhost:4050";
 
-type IntentCatalogChain = Omit<DeploymentChain, "chainId" | "tokens"> & {
+export const INTENT_IDENTITY_HEADERS = {
+  "x-nexus-client-id": "leouarz-intent-demo-app",
+  "x-nexus-surface": "nexus-app",
+  "x-nexus-surface-version": "0.0.1",
+} as const;
+
+type IntentCatalogChain = Omit<DeploymentChain, "chainId"> & {
   chainId: number | string;
-  tokens?: Array<{
-    address: string;
-    symbol: string;
-    name: string;
-    decimals: number;
-    isNative: boolean;
-    logo?: string;
-    coingeckoId?: string;
-    asSource?: ProviderSupport[];
-    asDestination?: ProviderSupport[];
-  }>;
 };
 
-// Loads the provider catalog used to populate chains and tokens.
+type IntentToken = {
+  universe: "EVM";
+  chainId: string;
+  address: string;
+  name: string;
+  symbol: string;
+  decimals: number;
+  isNative: boolean;
+  logo?: string;
+  coingeckoId?: string;
+  asSource?: ProviderSupport[];
+  asDestination?: ProviderSupport[];
+};
+
+type IntentTokenPage = {
+  tokens: IntentToken[];
+  offset: number;
+  limit: number;
+  total: number;
+};
+
+// Loads the provider-backed chain catalog. Tokens are fetched separately from /tokens.
 export async function fetchDeployment(
   query?: URLSearchParams,
 ): Promise<DeploymentResponse> {
   const queryString = query?.toString();
   const url = `${MIDDLEWARE_URL}/api/v1/better-intent/chains${queryString ? `?${queryString}` : ""}`;
-  const response = await fetch(url);
+  const response = await fetch(url, { headers: INTENT_IDENTITY_HEADERS });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw middlewareApiError(body, response.status);
@@ -53,31 +71,87 @@ export async function fetchDeployment(
 
   return sortDeploymentCatalog({
     network: "better-intent",
+    tokens: [],
     chains: (body as IntentCatalogChain[]).map((chain) => {
       const chainId = parseIntentChainId(chain.chainId);
       return {
         ...chain,
         chainId,
-        tokens: (chain.tokens ?? [])
-          .filter((token) => !token.isNative)
-          .map((token) => ({
-            symbol: token.symbol,
-            name: token.name,
-            address: token.address,
-            decimals: token.decimals,
-            logo: token.logo,
-            coingeckoId: token.coingeckoId,
-            asSource: token.asSource ?? [],
-            asDestination: token.asDestination ?? [],
-            sourceKind: [...(token.asSource ?? []), ...(token.asDestination ?? [])].some(
-              (provider) => provider.id === "nexus-v2",
-            )
-              ? ("bridge" as const)
-              : ("swap" as const),
-          })),
       };
     }),
   });
+}
+
+async function fetchTokenPage(
+  params: URLSearchParams,
+): Promise<IntentTokenPage> {
+  const response = await fetch(
+    `${MIDDLEWARE_URL}/api/v1/better-intent/tokens?${params.toString()}`,
+    { headers: INTENT_IDENTITY_HEADERS },
+  );
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw middlewareApiError(body, response.status);
+  if (
+    !body ||
+    typeof body !== "object" ||
+    !Array.isArray((body as IntentTokenPage).tokens)
+  ) {
+    throw middlewareApiError(body, response.status);
+  }
+  return body as IntentTokenPage;
+}
+
+function tokenParams(
+  options: { chainId?: number; limit: number },
+): URLSearchParams {
+  const params = new URLSearchParams({ limit: String(options.limit) });
+  if (options.chainId !== undefined) {
+    params.set("chainId", `EVM_${options.chainId}`);
+  }
+  return params;
+}
+
+function mapIntentToken(token: IntentToken): DeploymentToken {
+  const chainId = parseIntentChainId(token.chainId);
+  return {
+    chainId,
+    symbol: token.symbol,
+    name: token.name,
+    address: token.address,
+    decimals: token.decimals,
+    isNative: token.isNative,
+    logo: token.logo,
+    coingeckoId: token.coingeckoId,
+    asSource: token.asSource ?? [],
+    asDestination: token.asDestination ?? [],
+    sourceKind: [...(token.asSource ?? []), ...(token.asDestination ?? [])].some(
+      (provider) => provider.id === "nexus-v2",
+    )
+      ? "bridge"
+      : "swap",
+  };
+}
+
+// The selector searches name, symbol, and contract independently because the API exposes each
+// filter separately. Results are merged and deduplicated before reaching the UI.
+export async function fetchIntentTokens(options: {
+  chainId?: number;
+  search?: string;
+  limit?: number;
+} = {}): Promise<DeploymentToken[]> {
+  const limit = Math.min(Math.max(options.limit ?? 100, 1), 1000);
+  const search = options.search?.trim();
+  const filters = search ? ["name", "symbol", "contract"] : [undefined];
+  const pages = await Promise.all(
+    filters.map((filter) => {
+      const params = tokenParams({ chainId: options.chainId, limit });
+      if (search && filter) params.set(filter, search);
+      return fetchTokenPage(params);
+    }),
+  );
+
+  const tokens = pages.flatMap((page) => page.tokens.map(mapIntentToken));
+  return mergeDeploymentTokens([], tokens).slice(0, limit);
 }
 
 // Loads every routable balance returned by the provider-backed Ankr balance endpoint.
@@ -87,6 +161,7 @@ export async function fetchIntentBalances(
   const validatedAddress = assertAddress(address, "user address");
   const response = await fetch(
     `${MIDDLEWARE_URL}/api/v1/better-intent/balances/${validatedAddress}?refresh=true`,
+    { headers: INTENT_IDENTITY_HEADERS },
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -109,7 +184,7 @@ export async function requestIntentQuote(
 ): Promise<IntentQuote> {
   const response = await fetch(`${MIDDLEWARE_URL}/api/v1/better-intent/quote`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...INTENT_IDENTITY_HEADERS, "content-type": "application/json" },
     body: JSON.stringify(buildIntentQuoteRequest(deployment, form)),
   });
 
@@ -128,7 +203,7 @@ export async function submitIntent(
     `${MIDDLEWARE_URL}/api/v1/better-intent/submit`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...INTENT_IDENTITY_HEADERS, "content-type": "application/json" },
       body: JSON.stringify(request),
     },
   );
@@ -146,6 +221,7 @@ export async function fetchIntentStatus(
 ): Promise<IntentStatusResponse> {
   const response = await fetch(
     `${MIDDLEWARE_URL}/api/v1/better-intent/status/${quoteId}`,
+    { headers: INTENT_IDENTITY_HEADERS },
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {

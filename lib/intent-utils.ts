@@ -3,8 +3,10 @@
 import {
   encodeFunctionData,
   erc20Abi,
+  getTypesForEIP712Domain,
   isAddress,
   parseUnits,
+  recoverTypedDataAddress,
   type Abi,
   type Hex,
 } from "viem";
@@ -21,14 +23,16 @@ export type ProviderId = "nexus-v2" | "mayan" | "relay";
 
 export type ProviderSupport = {
   id: ProviderId;
-  currencyId?: number;
+  currencyId?: number | string;
 };
 
 export type DeploymentToken = {
+  chainId: number;
   symbol: string;
   name: string;
   address: string;
   decimals: number;
+  isNative: boolean;
   logo?: string;
   coingeckoId?: string;
   sourceKind?: "bridge" | "swap";
@@ -50,7 +54,6 @@ export type DeploymentChain = {
     coingeckoId?: string;
     logo?: string;
   };
-  tokens: DeploymentToken[];
 };
 
 export type DeploymentResponse = {
@@ -58,7 +61,15 @@ export type DeploymentResponse = {
   mayanEnabled?: boolean;
   mayanThresholdUsd?: number;
   chains: DeploymentChain[];
+  tokens: DeploymentToken[];
 };
+
+export function getUsableLogo(src?: string): string | undefined {
+  if (!src || /(?:^|\/)missing_large\.png(?:$|[?#])/i.test(src)) {
+    return undefined;
+  }
+  return src;
+}
 
 function alphabetical(left: string, right: string): number {
   return left.localeCompare(right, undefined, { sensitivity: "base" });
@@ -82,11 +93,11 @@ export function sortDeploymentCatalog(
   return {
     ...deployment,
     chains: [...deployment.chains]
-      .sort(compareDeploymentChains)
-      .map((chain) => ({
-        ...chain,
-        tokens: [...chain.tokens].sort(compareDeploymentTokens),
-      })),
+      .sort(compareDeploymentChains),
+    tokens: [...deployment.tokens].sort(
+      (left, right) =>
+        left.chainId - right.chainId || compareDeploymentTokens(left, right),
+    ),
   };
 }
 
@@ -114,10 +125,10 @@ export type IntentBalance = {
   isNative: boolean;
   logo?: string;
   coingeckoId?: string;
-  providers: Array<{ id: ProviderId; currencyId?: number }>;
+  providers: Array<{ id: ProviderId; currencyId?: number | string }>;
   balance: string;
   valueUsd: number | null;
-  priceSource: "oracle" | "indexer" | null;
+  priceSource: "oracle" | "coingecko" | "relay" | "indexer" | null;
   usable: boolean;
 };
 
@@ -161,8 +172,11 @@ export type IntentInputLeg = {
   tokenAddress: Hex;
   tokenSymbol: string;
   amount: string;
+  amountUsd: string;
   depositFee: string;
+  depositFeeUsd: string;
   totalRequired: string;
+  totalRequiredUsd: string;
 };
 
 export type RoutingPayload = {
@@ -170,6 +184,52 @@ export type RoutingPayload = {
   target: Hex;
   calldata: Hex;
   arbitrary_data: Hex;
+};
+
+export type PermitTypedData = {
+  domain: {
+    name: string;
+    version: string;
+    chainId?: number;
+    verifyingContract: Hex;
+    salt?: Hex;
+  };
+  types: Record<string, Array<{ name: string; type: string }>>;
+  primaryType: "Permit" | "MetaTransaction";
+  message: Record<string, string>;
+};
+
+export type IntentSignatureRequirement = {
+  kind: "intent";
+  universe: "EVM";
+  signingScheme: "personal_sign";
+  data: {
+    messagePrefix: string;
+    message: Hex;
+    hash: Hex;
+  };
+};
+
+export type SourceApprovalSignatureRequirement = {
+  kind: "sourceApproval";
+  universe: "EVM";
+  chainId: number;
+  tokenAddress: Hex;
+  signingScheme: "eip712";
+  data: PermitTypedData;
+};
+
+export type RequiredSignature =
+  | IntentSignatureRequirement
+  | SourceApprovalSignatureRequirement;
+
+export type SubmittedSignature = {
+  kind: RequiredSignature["kind"];
+  universe?: "EVM";
+  signingScheme?: "personal_sign" | "eip712";
+  chainId?: number;
+  tokenAddress?: Hex;
+  signature: Hex;
 };
 
 export type IntentRff = {
@@ -190,25 +250,25 @@ export type IntentQuote = {
     chainId: string; // "EVM_<chainId>"
     tokenAddress: Hex;
     amount: string;
+    amountUsd: string;
   };
   minAmountOut: string;
+  minAmountOutUsd: string;
   fees: {
     deposit: string;
+    depositUsd: string;
     fulfillment: string;
+    fulfillmentUsd: string;
     protocol: string;
+    protocolUsd: string;
     solver: string;
-    caGas: string;
+    solverUsd: string;
   };
   expiry: string;
   rff: IntentRff;
   rffHash: Hex;
-  signing: {
-    type: "personal_sign";
-    messagePrefix: string;
-    message: Hex;
-    hash: Hex;
-  };
   allowances: Array<{
+    universe: "EVM";
     chainId: number;
     tokenAddress: Hex;
     spender: Hex;
@@ -216,6 +276,7 @@ export type IntentQuote = {
     current: string;
     required: string;
     deficit: string;
+    authorizationType?: "approve" | "permit";
     approval?: {
       type: "erc20_approve";
       to: Hex;
@@ -226,9 +287,11 @@ export type IntentQuote = {
   nativeTransactions: Array<{
     chainId: number;
     sourceIndex: number;
+    kind: "native_source_deposit";
     to: Hex;
     value: string;
     functionName: "deposit" | "depositRouter";
+    needsIntentSignature: true;
     abi: Abi;
     vaultRequest: Record<string, unknown>;
     payload?: Hex;
@@ -240,8 +303,8 @@ export type IntentQuote = {
       authorization?: "0x";
     };
   }>;
-  submitRequirements?: {
-    requiresIntentSignature: boolean;
+  submitRequirements: {
+    requiredSignatures: RequiredSignature[];
     requiresApprovals: boolean;
     requiresNativeTxReceipts: boolean;
   };
@@ -254,9 +317,9 @@ export type IntentLifecycleStatus =
   | "expired";
 
 export type IntentSubmitRequest = {
-  provider?: ProviderId;
+  provider: ProviderId;
   rff: IntentRff;
-  rffSignature: Hex;
+  signatures: SubmittedSignature[];
   nativeTxReceipts?: Array<{ sourceIndex: number; txHash: Hex }>;
 };
 
@@ -322,7 +385,8 @@ export class MiddlewareApiError extends Error {
 
 export type IntentExecutionResult = {
   approvals: Array<IntentQuote["allowances"][number] & { hash: Hex }>;
-  rffSignature: Hex;
+  intentSignature: Hex;
+  signatures: SubmittedSignature[];
   nativeTransactions: Array<{
     chainId: number;
     sourceIndex: number;
@@ -390,6 +454,19 @@ export function buildInitialIntentForm(
   };
 }
 
+function deploymentTokenKey(token: Pick<DeploymentToken, "chainId" | "address">): string {
+  return `${token.chainId}:${token.address.toLowerCase()}`;
+}
+
+export function mergeDeploymentTokens(
+  current: DeploymentToken[],
+  incoming: DeploymentToken[],
+): DeploymentToken[] {
+  const tokens = new Map(current.map((token) => [deploymentTokenKey(token), token]));
+  for (const token of incoming) tokens.set(deploymentTokenKey(token), token);
+  return [...tokens.values()];
+}
+
 // Finds the display chain configuration for a chain id.
 export function getChain(
   deployment: DeploymentResponse,
@@ -402,7 +479,7 @@ export function getChain(
   return chain;
 }
 
-// Lists the selectable native token and every provider-catalog token for a chain.
+// Lists the selectable native token and every loaded provider-catalog token for a chain.
 export function getTokensForChain(
   deployment: DeploymentResponse,
   chainId: number,
@@ -421,7 +498,9 @@ export function getTokensForChain(
       asSource: (chain.asSource ?? []).map((id) => ({ id })),
       asDestination: (chain.asDestination ?? []).map((id) => ({ id })),
     },
-    ...chain.tokens.map((token) => ({
+    ...deployment.tokens
+      .filter((token) => token.chainId === chain.chainId && !token.isNative)
+      .map((token) => ({
       chainId: chain.chainId,
       symbol: token.symbol,
       name: token.name,
@@ -433,14 +512,9 @@ export function getTokensForChain(
       mayanEnabled: token.mayanEnabled,
       asSource: token.asSource ?? [],
       asDestination: token.asDestination ?? [],
-    })),
+      })),
   ];
-  return tokens.sort(
-    (left, right) =>
-      alphabetical(left.symbol, right.symbol) ||
-      alphabetical(left.name, right.name) ||
-      left.address.localeCompare(right.address),
-  );
+  return tokens;
 }
 
 // Finds token metadata needed to convert a human amount into raw units.
@@ -654,18 +728,54 @@ export async function executeIntentQuote(
     quote.allowances,
     log,
   );
-  const rffSignature = await signIntentHash(
+
+  const intentRequirement = quote.submitRequirements.requiredSignatures.find(
+    (requirement): requirement is IntentSignatureRequirement =>
+      requirement.kind === "intent",
+  );
+  if (!intentRequirement) {
+    throw new Error("Quote is missing its intent signature requirement");
+  }
+
+  const intentSignature = await signIntentHash(
     provider,
     options.account,
-    quote.signing,
+    intentRequirement,
     log,
   );
   log("Intent signature received");
+
+  const signatures: SubmittedSignature[] = [
+    {
+      kind: intentRequirement.kind,
+      universe: intentRequirement.universe,
+      signingScheme: intentRequirement.signingScheme,
+      signature: intentSignature,
+    },
+  ];
+  for (const requirement of quote.submitRequirements.requiredSignatures) {
+    if (requirement.kind !== "sourceApproval") continue;
+    const signature = await signSourceApproval(
+      provider,
+      options.account,
+      requirement,
+      log,
+    );
+    signatures.push({
+      kind: requirement.kind,
+      universe: requirement.universe,
+      signingScheme: requirement.signingScheme,
+      chainId: requirement.chainId,
+      tokenAddress: requirement.tokenAddress,
+      signature,
+    });
+  }
+
   const nativeTransactions = await sendNativeTransactions(
     provider,
     options.account,
     quote.nativeTransactions,
-    rffSignature,
+    intentSignature,
     log,
   );
   const nativeTxReceipts = nativeTransactions.map((tx) => ({
@@ -676,14 +786,15 @@ export async function executeIntentQuote(
   const submitRequest: IntentSubmitRequest = {
     provider: quote.provider,
     rff: quote.rff,
-    rffSignature,
+    signatures,
     ...(nativeTxReceipts.length ? { nativeTxReceipts } : {}),
   };
 
   log("Wallet flow is ready to submit");
   return {
     approvals,
-    rffSignature,
+    intentSignature,
+    signatures,
     nativeTransactions,
     nativeTxReceipts,
     submitRequest,
@@ -702,6 +813,13 @@ export async function approveAllowances(
     if (BigInt(allowance.deficit) === 0n) {
       log(
         `Approval already satisfied for ${allowance.tokenAddress} on ${allowance.chainId}`,
+      );
+      continue;
+    }
+
+    if (allowance.authorizationType === "permit") {
+      log(
+        `Approval will be sponsored for ${allowance.tokenAddress} on ${allowance.chainId}`,
       );
       continue;
     }
@@ -740,14 +858,85 @@ export async function approveAllowances(
 export async function signIntentHash(
   provider: EthereumProvider,
   account: Hex,
-  signing: IntentQuote["signing"],
+  signing: IntentSignatureRequirement,
   log: (message: string) => void,
 ) {
   log("Signing intent hash");
   return provider.request<Hex>({
     method: "personal_sign",
-    params: [signing.message, account],
+    params: [signing.data.message, account],
   });
+}
+
+// Signs a middleware-provided EIP-712 permit for a sponsored approval.
+export async function signSourceApproval(
+  provider: EthereumProvider,
+  account: Hex,
+  requirement: SourceApprovalSignatureRequirement,
+  log: (message: string) => void,
+) {
+  const typedDataOwner =
+    requirement.data.message.owner ?? requirement.data.message.from;
+  if (typedDataOwner && typedDataOwner.toLowerCase() !== account.toLowerCase()) {
+    throw new Error(
+      `Approval signature belongs to ${typedDataOwner}, but the connected wallet is ${account}`,
+    );
+  }
+
+  await switchChain(provider, requirement.chainId);
+  log(
+    `Signing sponsored approval for ${requirement.tokenAddress} on ${requirement.chainId}`,
+  );
+  // eth_signTypedData_v4 expects the domain type to be present in the JSON-RPC
+  // payload. The middleware/viem representation derives it implicitly, so add
+  // the equivalent definition only at this wallet-provider boundary.
+  const walletTypedData = {
+    ...requirement.data,
+    types: {
+      EIP712Domain: getTypesForEIP712Domain({ domain: requirement.data.domain }),
+      ...requirement.data.types,
+    },
+  };
+  const signature = await provider.request<Hex>({
+    method: "eth_signTypedData_v4",
+    params: [account, JSON.stringify(walletTypedData)],
+  });
+  if (typeof signature !== "string" || !/^0x[0-9a-fA-F]{130}$/.test(signature)) {
+    throw new Error(
+      "Wallet returned an unsupported permit signature; expected a 65-byte ECDSA signature",
+    );
+  }
+  log("Sponsored approval signature received; verifying locally");
+
+  const message: Record<string, string | bigint> = { ...requirement.data.message };
+  for (const field of requirement.data.types[requirement.data.primaryType] ?? []) {
+    if (field.type === "uint256") {
+      message[field.name] = BigInt(requirement.data.message[field.name]);
+    }
+  }
+  let recovered: string;
+  try {
+    recovered = await recoverTypedDataAddress({
+      domain: requirement.data.domain,
+      types: requirement.data.types,
+      primaryType: requirement.data.primaryType,
+      message,
+      signature,
+    } as Parameters<typeof recoverTypedDataAddress>[0]);
+  } catch (error) {
+    throw new Error(
+      `Wallet returned an invalid EIP-712 permit signature: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (recovered.toLowerCase() !== account.toLowerCase()) {
+    throw new Error(
+      `Wallet returned a permit for ${recovered}, expected ${account}; no native deposits were sent`,
+    );
+  }
+  log(`Sponsored approval signature verified locally for ${requirement.tokenAddress}`);
+  return signature;
 }
 
 // Sends the native deposit transactions requested by the quote.
@@ -755,7 +944,7 @@ export async function sendNativeTransactions(
   provider: EthereumProvider,
   account: Hex,
   nativeTransactions: IntentQuote["nativeTransactions"],
-  rffSignature: Hex,
+  intentSignature: Hex,
   log: (message: string) => void,
 ) {
   const sent = [];
@@ -765,7 +954,7 @@ export async function sendNativeTransactions(
     );
     await switchChain(provider, nativeTx.chainId);
     log(`Wallet switched to chain ${nativeTx.chainId}`);
-    const args = buildNativeTxArgs(nativeTx, rffSignature);
+    const args = buildNativeTxArgs(nativeTx, intentSignature);
     const data = encodeFunctionData({
       abi: nativeTx.abi,
       functionName: nativeTx.functionName,
@@ -832,11 +1021,11 @@ async function waitForSuccessfulTransactionReceipt(
 // Builds the exact ABI arguments for a middleware-provided native tx.
 export function buildNativeTxArgs(
   nativeTx: IntentQuote["nativeTransactions"][number],
-  rffSignature: Hex,
+  intentSignature: Hex,
 ) {
   const baseArgs = [
     nativeTx.vaultRequest,
-    rffSignature,
+    intentSignature,
     BigInt(nativeTx.sourceIndex),
   ];
   if (nativeTx.functionName === "deposit") return baseArgs;

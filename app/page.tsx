@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { SourceSelector } from "../components/source-selector";
+import { TokenSelector } from "../components/token-selector";
 import {
   MIDDLEWARE_URL,
   fetchDeployment,
   fetchIntentBalances,
+  fetchIntentTokens,
   fetchRouteCatalog,
   pollIntentStatus,
   requestIntentQuote,
@@ -22,7 +24,10 @@ import {
   getMiddlewareErrorPayload,
   getToken,
   getTokensForChain,
+  getUsableLogo,
+  mergeDeploymentTokens,
   type DeploymentChain,
+  type DeploymentToken,
   type DeploymentResponse,
   type Hex,
   type InputLeg,
@@ -67,10 +72,17 @@ export default function Page() {
 
     async function loadDeployment() {
       try {
-        const nextDeployment = await fetchDeployment();
+        const [nextDeployment, initialTokens] = await Promise.all([
+          fetchDeployment(),
+          fetchIntentTokens({ limit: 100 }),
+        ]);
         if (cancelled) return;
-        setDeployment(nextDeployment);
-        setForm((current) => current ?? buildInitialIntentForm(nextDeployment));
+        const hydratedDeployment = {
+          ...nextDeployment,
+          tokens: mergeDeploymentTokens(nextDeployment.tokens, initialTokens),
+        };
+        setDeployment(hydratedDeployment);
+        setForm((current) => current ?? buildInitialIntentForm(hydratedDeployment));
         setStructuredError(null);
         setStatus("Ready to quote intents");
       } catch (nextError) {
@@ -88,21 +100,20 @@ export default function Page() {
     };
   }, []);
 
+  const registerTokens = useCallback((tokens: DeploymentToken[]) => {
+    setDeployment((current) =>
+      current
+        ? { ...current, tokens: mergeDeploymentTokens(current.tokens, tokens) }
+        : current,
+    );
+  }, []);
+
   const effectiveForm = useMemo(() => {
     if (!deployment || !form) return null;
     return buildEffectiveForm(deployment, form, advancedOpen);
   }, [deployment, form, advancedOpen]);
 
-  const destinationTokens = useMemo(() => {
-    if (!deployment || !form) return [];
-    return getTokensForChain(deployment, form.destinationChainId);
-  }, [deployment, form]);
-
   const sourceLeg = form?.inputs[0] ?? null;
-  const sourceTokens = useMemo(() => {
-    if (!deployment || !sourceLeg) return [];
-    return getTokensForChain(deployment, sourceLeg.chainId);
-  }, [deployment, sourceLeg]);
 
   const requestPreview = useMemo(() => {
     if (!deployment || !effectiveForm) return "";
@@ -119,6 +130,19 @@ export default function Page() {
 
   function addLog(message: string) {
     setLogs((current) => [...current, message].slice(-18));
+  }
+
+  function clearTransientIntentState() {
+    setQuote(null);
+    setSubmitResult(null);
+    setIntentStatus(null);
+    setRouteCatalog(null);
+    setStructuredError(null);
+    setError(null);
+    setWarnings([]);
+    setLogs([]);
+    setRawVisible(false);
+    setStatus("Ready to quote intents");
   }
 
   function patchForm(patch: Partial<IntentFormState>) {
@@ -264,7 +288,8 @@ export default function Page() {
         setStatus("Refreshing balances");
         try {
           await refreshBalances(effectiveForm.sender);
-          appendLog("Balances refreshed after fulfillment");
+          clearTransientIntentState();
+          return;
         } catch (refreshError) {
           appendLog(`Balance refresh failed: ${readError(refreshError)}`);
         }
@@ -421,18 +446,13 @@ export default function Page() {
                           </option>
                         ))}
                       </select>
-                      <select
+                      <TokenSelector
+                        deployment={deployment}
+                        chainId={sourceLeg.chainId}
                         value={sourceLeg.token}
-                        onChange={(event) =>
-                          setSimpleInput({ token: event.target.value as Hex })
-                        }
-                      >
-                        {sourceTokens.map((token) => (
-                          <option key={token.address} value={token.address}>
-                            {tokenOptionLabel(token)}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(token) => setSimpleInput({ token })}
+                        onTokensLoaded={registerTokens}
+                      />
                     </div>
                   </>
                 ) : isExactInput ? (
@@ -505,20 +525,15 @@ export default function Page() {
                       </option>
                     ))}
                   </select>
-                  <select
+                  <TokenSelector
+                    deployment={deployment}
+                    chainId={form.destinationChainId}
                     value={form.destinationTokenAddress}
-                    onChange={(event) =>
-                      patchForm({
-                        destinationTokenAddress: event.target.value as Hex,
-                      })
+                    onChange={(token) =>
+                      patchForm({ destinationTokenAddress: token })
                     }
-                  >
-                    {destinationTokens.map((token) => (
-                      <option key={token.address} value={token.address}>
-                        {tokenOptionLabel(token)}
-                      </option>
-                    ))}
-                  </select>
+                    onTokensLoaded={registerTokens}
+                  />
                 </div>
               </div>
             </div>
@@ -658,6 +673,7 @@ export default function Page() {
                         deployment={deployment}
                         value={form.inputs}
                         onChange={(inputs) => patchForm({ inputs })}
+                        onTokensLoaded={registerTokens}
                       />
                     </>
                   ) : (
@@ -667,6 +683,7 @@ export default function Page() {
                         deployment={deployment}
                         value={form.sources}
                         onChange={(sources) => patchForm({ sources })}
+                        onTokensLoaded={registerTokens}
                       />
                     </>
                   )}
@@ -691,6 +708,7 @@ export default function Page() {
           />
           <RoutePreview
             catalog={routeCatalog}
+            deployment={deployment}
             form={effectiveForm}
           />
           <StatusPanel
@@ -779,11 +797,6 @@ function SelectionSummary({
       </div>
     </div>
   );
-}
-
-function tokenOptionLabel(token: SelectableToken): string {
-  if (token.native) return `${token.symbol} · native`;
-  return `${token.symbol} · ${shortAddress(token.address)} · ${token.name}`;
 }
 
 function InputSummary({
@@ -880,24 +893,30 @@ function QuotePanel({
       <dl className="quoteList">
         <div>
           <dt>Output</dt>
-          <dd>
-            {formatQuoteAmount(
-              deployment,
-              quote.output.chainId,
-              quote.output.tokenAddress,
-              quote.output.amount,
-            )}
+          <dd className="quoteMetric">
+            <span>
+              {formatQuoteAmount(
+                deployment,
+                quote.output.chainId,
+                quote.output.tokenAddress,
+                quote.output.amount,
+              )}
+            </span>
+            <span className="quoteUsd">≈ ${quote.output.amountUsd}</span>
           </dd>
         </div>
         <div>
           <dt>Min received</dt>
-          <dd>
-            {formatQuoteAmount(
-              deployment,
-              quote.output.chainId,
-              quote.output.tokenAddress,
-              quote.minAmountOut,
-            )}
+          <dd className="quoteMetric">
+            <span>
+              {formatQuoteAmount(
+                deployment,
+                quote.output.chainId,
+                quote.output.tokenAddress,
+                quote.minAmountOut,
+              )}
+            </span>
+            <span className="quoteUsd">≈ ${quote.minAmountOutUsd}</span>
           </dd>
         </div>
         <div>
@@ -914,8 +933,23 @@ function QuotePanel({
         </div>
         <div>
           <dt>Fees</dt>
-          <dd>
-            {quote.fees.deposit} deposit · {quote.fees.fulfillment} fulfillment
+          <dd className="quoteFeeBreakdown">
+            <span>
+              Deposit: {quote.fees.deposit} (
+              <span className="quoteUsd">${quote.fees.depositUsd}</span>)
+            </span>
+            <span>
+              Fulfillment: {quote.fees.fulfillment} (
+              <span className="quoteUsd">${quote.fees.fulfillmentUsd}</span>)
+            </span>
+            <span>
+              Protocol: {quote.fees.protocol} (
+              <span className="quoteUsd">${quote.fees.protocolUsd}</span>)
+            </span>
+            <span>
+              Solver: {quote.fees.solver} (
+              <span className="quoteUsd">${quote.fees.solverUsd}</span>)
+            </span>
           </dd>
         </div>
       </dl>
@@ -949,12 +983,18 @@ function QuotePanel({
                   {formatBalanceAmount(input.amount, token.decimals)}{" "}
                   {token.symbol}
                 </strong>
+                <span className="quoteUsd">≈ ${input.amountUsd}</span>
                 <span>
                   {quote.tradeType === "exactInput"
                     ? "Total wallet amount: "
                     : "Total with fee: "}
                   {formatBalanceAmount(input.totalRequired, token.decimals)}{" "}
                   {token.symbol}
+                </span>
+                <span className="quoteUsd">≈ ${input.totalRequiredUsd}</span>
+                <span className="quoteInputFee">
+                  Deposit fee: {formatBalanceAmount(input.depositFee, token.decimals)} {token.symbol}
+                  (≈ ${input.depositFeeUsd})
                 </span>
               </div>
             </div>
@@ -1071,9 +1111,11 @@ function MiddlewareErrorPanel({
 
 function RoutePreview({
   catalog,
+  deployment,
   form,
 }: {
   catalog: DeploymentResponse | null;
+  deployment: DeploymentResponse;
   form: IntentFormState;
 }) {
   if (!catalog) return null;
@@ -1081,44 +1123,26 @@ function RoutePreview({
   const destinationChain = catalog.chains.find(
     (chain) => chain.chainId === form.destinationChainId,
   );
-  const destinationToken = destinationChain?.tokens.find(
-    (token) =>
-      token.address.toLowerCase() === form.destinationTokenAddress.toLowerCase(),
-  );
-  const destinationProviders = providerNames(
-    destinationToken?.asDestination ?? destinationChain?.asDestination,
-  );
+  const destinationProviders = providerNames(destinationChain?.asDestination);
 
   const sourceDescriptions =
     form.tradeType === "exactInput"
       ? form.inputs.map((input) => {
           const chain = catalog.chains.find((item) => item.chainId === input.chainId);
-          const token = chain?.tokens.find(
-            (item) => item.address.toLowerCase() === input.token.toLowerCase(),
-          );
-          return `${token?.symbol ?? "source"} on ${chain?.name ?? `EVM_${input.chainId}`}: ${providerNames(token?.asSource ?? chain?.asSource)}`;
+          const token = getToken(deployment, input.chainId, input.token);
+          return `${token.symbol} on ${chain?.name ?? `EVM_${input.chainId}`}: ${providerNames(chain?.asSource)}`;
         })
       : form.sources.length > 0
         ? form.sources.map((source) => {
             const chain = catalog.chains.find(
               (item) => item.chainId === source.sourceChain,
             );
-            const providers = source.tokens.flatMap((tokenAddress) => {
-              const token = chain?.tokens.find(
-                (item) => item.address.toLowerCase() === tokenAddress.toLowerCase(),
-              );
-              return token?.asSource ?? [];
-            });
             return `${chain?.name ?? `EVM_${source.sourceChain}`}: ${providerNames(
-              providers.length > 0 ? providers : chain?.asSource,
+              chain?.asSource,
             )}`;
           })
         : [
-            `Automatic source search: ${catalog.chains.reduce(
-              (count, chain) =>
-                count + chain.tokens.filter((token) => token.asSource?.length).length,
-              0,
-            )} priced assets available`,
+            "Automatic source search across provider-supported balances",
           ];
 
   return (
@@ -1206,10 +1230,12 @@ function InputsEditor({
   deployment,
   value,
   onChange,
+  onTokensLoaded,
 }: {
   deployment: DeploymentResponse;
   value: InputLeg[];
   onChange: (next: InputLeg[]) => void;
+  onTokensLoaded: (tokens: DeploymentToken[]) => void;
 }) {
   function addLeg() {
     onChange([...value, defaultInputLeg(deployment)]);
@@ -1235,7 +1261,6 @@ function InputsEditor({
 
       {value.map((leg, index) => {
         const chain = getChain(deployment, leg.chainId);
-        const tokens = getTokensForChain(deployment, leg.chainId);
         const token = getToken(deployment, leg.chainId, leg.token);
         return (
           <div className="sourceCard" key={`${leg.chainId}-${index}`}>
@@ -1279,18 +1304,13 @@ function InputsEditor({
               </label>
               <label className="field">
                 <span className="label">Token</span>
-                <select
+                <TokenSelector
+                  deployment={deployment}
+                  chainId={leg.chainId}
                   value={leg.token}
-                  onChange={(event) =>
-                    updateLeg(index, { token: event.target.value as Hex })
-                  }
-                >
-                  {tokens.map((nextToken) => (
-                    <option key={nextToken.address} value={nextToken.address}>
-                      {tokenOptionLabel(nextToken)}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(address) => updateLeg(index, { token: address })}
+                  onTokensLoaded={onTokensLoaded}
+                />
               </label>
             </div>
           </div>
@@ -1402,13 +1422,19 @@ function BalanceTokenRow({ balance }: { balance: IntentBalance }) {
 
 function Logo({ src, label }: { src?: string; label: string }) {
   const [failed, setFailed] = useState(false);
-  if (!src || failed) {
+  const usableSrc = getUsableLogo(src);
+  if (!usableSrc || failed) {
     return (
       <span className="logoFallback">{label.slice(0, 1).toUpperCase()}</span>
     );
   }
   return (
-    <img className="logo" src={src} alt="" onError={() => setFailed(true)} />
+    <img
+      className="logo"
+      src={usableSrc}
+      alt=""
+      onError={() => setFailed(true)}
+    />
   );
 }
 

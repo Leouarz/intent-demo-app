@@ -3,17 +3,25 @@
 import {
   getTokensForChain,
   type DeploymentResponse,
+  type DeploymentToken,
   type Hex,
   type SourcePreference,
 } from "../lib/intent-utils";
+import { TokenSelector } from "./token-selector";
 
 type Props = {
   deployment: DeploymentResponse;
   value: SourcePreference[];
   onChange: (next: SourcePreference[]) => void;
+  onTokensLoaded: (tokens: DeploymentToken[]) => void;
 };
 
-export function SourceSelector({ deployment, value, onChange }: Props) {
+export function SourceSelector({
+  deployment,
+  value,
+  onChange,
+  onTokensLoaded,
+}: Props) {
   function updateSource(index: number, patch: Partial<SourcePreference>) {
     onChange(
       value.map((source, sourceIndex) =>
@@ -86,7 +94,6 @@ export function SourceSelector({ deployment, value, onChange }: Props) {
       ) : null}
 
       {value.map((source, index) => {
-        const tokens = getTokensForChain(deployment, source.sourceChain);
         return (
           <div className="sourceCard" key={`${source.sourceChain}-${index}`}>
             <div className="sourceHeader">
@@ -136,30 +143,18 @@ export function SourceSelector({ deployment, value, onChange }: Props) {
             </label>
 
             <div className="tokenPicker">
-              {tokens.map((token) => {
-                const selected = source.tokens.some(
-                  (item) => item.toLowerCase() === token.address.toLowerCase(),
-                );
-                return (
-                  <button
-                    type="button"
-                    key={`${token.chainId}-${token.address}`}
-                    onClick={() =>
-                      updateSource(index, {
-                        tokens: addToken(source, token.address),
-                      })
-                    }
-                    disabled={selected}
-                  >
-                    Add {token.symbol}
-                  </button>
-                );
-              })}
-              {tokens.length === 0 ? (
-                <div className="empty">
-                  No known tokens configured for this chain.
-                </div>
-              ) : null}
+              <TokenSelector
+                deployment={deployment}
+                chainId={source.sourceChain}
+                value=""
+                placeholder="Add a source token"
+                onChange={(token) =>
+                  updateSource(index, {
+                    tokens: addToken(source, token),
+                  })
+                }
+                onTokensLoaded={onTokensLoaded}
+              />
             </div>
 
             <div className="tokenList">
