@@ -132,6 +132,19 @@ export default function Page() {
     setLogs((current) => [...current, message].slice(-18));
   }
 
+  function clearTransientIntentState() {
+    setQuote(null);
+    setSubmitResult(null);
+    setIntentStatus(null);
+    setRouteCatalog(null);
+    setStructuredError(null);
+    setError(null);
+    setWarnings([]);
+    setLogs([]);
+    setRawVisible(false);
+    setStatus("Ready to quote intents");
+  }
+
   function patchForm(patch: Partial<IntentFormState>) {
     setForm((current) => (current ? { ...current, ...patch } : current));
     setQuote(null);
@@ -275,7 +288,8 @@ export default function Page() {
         setStatus("Refreshing balances");
         try {
           await refreshBalances(effectiveForm.sender);
-          appendLog("Balances refreshed after fulfillment");
+          clearTransientIntentState();
+          return;
         } catch (refreshError) {
           appendLog(`Balance refresh failed: ${readError(refreshError)}`);
         }
