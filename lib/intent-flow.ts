@@ -23,6 +23,12 @@ import {
 export const MIDDLEWARE_URL =
   process.env.NEXT_PUBLIC_MIDDLEWARE_URL ?? "http://localhost:4050";
 
+export const INTENT_IDENTITY_HEADERS = {
+  "x-nexus-client-id": "leouarz-intent-demo-app",
+  "x-nexus-surface": "nexus-app",
+  "x-nexus-surface-version": "0.0.1",
+} as const;
+
 type IntentCatalogChain = Omit<DeploymentChain, "chainId"> & {
   chainId: number | string;
 };
@@ -54,7 +60,7 @@ export async function fetchDeployment(
 ): Promise<DeploymentResponse> {
   const queryString = query?.toString();
   const url = `${MIDDLEWARE_URL}/api/v1/better-intent/chains${queryString ? `?${queryString}` : ""}`;
-  const response = await fetch(url);
+  const response = await fetch(url, { headers: INTENT_IDENTITY_HEADERS });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw middlewareApiError(body, response.status);
@@ -81,6 +87,7 @@ async function fetchTokenPage(
 ): Promise<IntentTokenPage> {
   const response = await fetch(
     `${MIDDLEWARE_URL}/api/v1/better-intent/tokens?${params.toString()}`,
+    { headers: INTENT_IDENTITY_HEADERS },
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) throw middlewareApiError(body, response.status);
@@ -154,6 +161,7 @@ export async function fetchIntentBalances(
   const validatedAddress = assertAddress(address, "user address");
   const response = await fetch(
     `${MIDDLEWARE_URL}/api/v1/better-intent/balances/${validatedAddress}?refresh=true`,
+    { headers: INTENT_IDENTITY_HEADERS },
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -176,7 +184,7 @@ export async function requestIntentQuote(
 ): Promise<IntentQuote> {
   const response = await fetch(`${MIDDLEWARE_URL}/api/v1/better-intent/quote`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { ...INTENT_IDENTITY_HEADERS, "content-type": "application/json" },
     body: JSON.stringify(buildIntentQuoteRequest(deployment, form)),
   });
 
@@ -195,7 +203,7 @@ export async function submitIntent(
     `${MIDDLEWARE_URL}/api/v1/better-intent/submit`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { ...INTENT_IDENTITY_HEADERS, "content-type": "application/json" },
       body: JSON.stringify(request),
     },
   );
@@ -213,6 +221,7 @@ export async function fetchIntentStatus(
 ): Promise<IntentStatusResponse> {
   const response = await fetch(
     `${MIDDLEWARE_URL}/api/v1/better-intent/status/${quoteId}`,
+    { headers: INTENT_IDENTITY_HEADERS },
   );
   const body = await response.json().catch(() => null);
   if (!response.ok) {
