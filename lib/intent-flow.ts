@@ -3,7 +3,7 @@
 import type { Hex } from "viem";
 import {
   assertAddress,
-  buildBetterIntentCatalogQuery,
+  buildIntentCatalogQuery,
   buildIntentQuoteRequest,
   mergeDeploymentTokens,
   middlewareApiError,
@@ -59,7 +59,7 @@ export async function fetchDeployment(
   query?: URLSearchParams,
 ): Promise<DeploymentResponse> {
   const queryString = query?.toString();
-  const url = `${MIDDLEWARE_URL}/api/v1/better-intent/chains${queryString ? `?${queryString}` : ""}`;
+  const url = `${MIDDLEWARE_URL}/api/v1/intent/chains${queryString ? `?${queryString}` : ""}`;
   const response = await fetch(url, { headers: INTENT_IDENTITY_HEADERS });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -70,7 +70,7 @@ export async function fetchDeployment(
   }
 
   return sortDeploymentCatalog({
-    network: "better-intent",
+    network: "intent",
     tokens: [],
     chains: (body as IntentCatalogChain[]).map((chain) => {
       const chainId = parseIntentChainId(chain.chainId);
@@ -86,7 +86,7 @@ async function fetchTokenPage(
   params: URLSearchParams,
 ): Promise<IntentTokenPage> {
   const response = await fetch(
-    `${MIDDLEWARE_URL}/api/v1/better-intent/tokens?${params.toString()}`,
+    `${MIDDLEWARE_URL}/api/v1/intent/tokens?${params.toString()}`,
     { headers: INTENT_IDENTITY_HEADERS },
   );
   const body = await response.json().catch(() => null);
@@ -160,7 +160,7 @@ export async function fetchIntentBalances(
 ): Promise<IntentBalances> {
   const validatedAddress = assertAddress(address, "user address");
   const response = await fetch(
-    `${MIDDLEWARE_URL}/api/v1/better-intent/balances/${validatedAddress}?refresh=true`,
+    `${MIDDLEWARE_URL}/api/v1/intent/balances/${validatedAddress}?refresh=true`,
     { headers: INTENT_IDENTITY_HEADERS },
   );
   const body = await response.json().catch(() => null);
@@ -182,7 +182,7 @@ export async function requestIntentQuote(
   deployment: DeploymentResponse,
   form: IntentFormState,
 ): Promise<IntentQuote> {
-  const response = await fetch(`${MIDDLEWARE_URL}/api/v1/better-intent/quote`, {
+  const response = await fetch(`${MIDDLEWARE_URL}/api/v1/intent/quote`, {
     method: "POST",
     headers: { ...INTENT_IDENTITY_HEADERS, "content-type": "application/json" },
     body: JSON.stringify(buildIntentQuoteRequest(deployment, form)),
@@ -200,7 +200,7 @@ export async function submitIntent(
   request: IntentSubmitRequest,
 ): Promise<IntentSubmitResponse> {
   const response = await fetch(
-    `${MIDDLEWARE_URL}/api/v1/better-intent/submit`,
+    `${MIDDLEWARE_URL}/api/v1/intent/submit`,
     {
       method: "POST",
       headers: { ...INTENT_IDENTITY_HEADERS, "content-type": "application/json" },
@@ -220,7 +220,7 @@ export async function fetchIntentStatus(
   quoteId: Hex,
 ): Promise<IntentStatusResponse> {
   const response = await fetch(
-    `${MIDDLEWARE_URL}/api/v1/better-intent/status/${quoteId}`,
+    `${MIDDLEWARE_URL}/api/v1/intent/status/${quoteId}`,
     { headers: INTENT_IDENTITY_HEADERS },
   );
   const body = await response.json().catch(() => null);
@@ -230,13 +230,13 @@ export async function fetchIntentStatus(
   return body as IntentStatusResponse;
 }
 
-// Runs the new Better Intent route preflight for the current form. The returned catalog keeps
+// Runs the new Intent route preflight for the current form. The returned catalog keeps
 // every entry, with asSource/asDestination narrowed to the selected route constraints.
 export async function fetchRouteCatalog(
   deployment: DeploymentResponse,
   form: IntentFormState,
 ): Promise<DeploymentResponse> {
-  return fetchDeployment(buildBetterIntentCatalogQuery(deployment, form));
+  return fetchDeployment(buildIntentCatalogQuery(deployment, form));
 }
 
 // Polls status until the intent reaches a terminal status.

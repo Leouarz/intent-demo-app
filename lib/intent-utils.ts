@@ -661,11 +661,11 @@ export function buildIntentQuoteRequest(
 }
 
 /**
- * Builds the Better Intent catalogue query for the route currently shown in the demo.
+ * Builds the Intent catalogue query for the route currently shown in the demo.
  * The catalogue is a preflight: it can narrow provider eligibility, but the quote remains
  * authoritative because provider liquidity and live fees can change.
  */
-export function buildBetterIntentCatalogQuery(
+export function buildIntentCatalogQuery(
   deployment: DeploymentResponse,
   form: IntentFormState,
 ): URLSearchParams {
@@ -1083,7 +1083,7 @@ export function getMiddlewareErrorPayload(error: unknown): MiddlewareErrorPayloa
   return error instanceof MiddlewareApiError ? error.payload : null;
 }
 
-// Creates an error that preserves Better Intent's structured source verdicts and provider reasons.
+// Creates an error that preserves Intent's structured source verdicts and provider reasons.
 export function middlewareApiError(body: unknown, status: number): MiddlewareApiError {
   return new MiddlewareApiError(normalizeMiddlewareError(body, status), status);
 }
