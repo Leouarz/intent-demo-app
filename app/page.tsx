@@ -19,8 +19,11 @@ import {
   connectInjectedWallet,
   executeIntentQuote,
   findInsufficientInputs,
+  findRouteSelectionIssues,
   formatBalanceAmount,
   getChain,
+  getRouteChains,
+  getRouteTokensForChain,
   getMiddlewareErrorPayload,
   getToken,
   getTokensForChain,
@@ -38,6 +41,7 @@ import {
   type IntentStatusResponse,
   type IntentSubmitResponse,
   type MiddlewareErrorPayload,
+  type ProviderChoice,
   type SourceVerdict,
   type SelectableToken,
 } from "../lib/intent-utils";
@@ -113,6 +117,15 @@ export default function Page() {
     return buildEffectiveForm(deployment, form, advancedOpen);
   }, [deployment, form, advancedOpen]);
 
+  const routeIssues = useMemo(() => {
+    if (!deployment || !effectiveForm) return [];
+    try {
+      return findRouteSelectionIssues(deployment, effectiveForm);
+    } catch (nextError) {
+      return [readError(nextError)];
+    }
+  }, [deployment, effectiveForm]);
+
   const sourceLeg = form?.inputs[0] ?? null;
 
   const requestPreview = useMemo(() => {
@@ -162,14 +175,37 @@ export default function Page() {
       tradeType,
       inputs:
         tradeType === "exactInput" && form.inputs.length === 0
-          ? [defaultInputLeg(deployment, form.destinationChainId)]
+          ? [
+              defaultInputLeg(
+                deployment,
+                form.destinationChainId,
+                getToken(
+                  deployment,
+                  form.destinationChainId,
+                  form.destinationTokenAddress,
+                ),
+                advancedOpen ? form.provider : "auto",
+              ),
+            ]
           : form.inputs,
     });
   }
 
   function setDestinationChain(chainId: number) {
-    if (!deployment) return;
-    const token = getTokensForChain(deployment, chainId)[0];
+    if (!deployment || !form) return;
+    const sourceToken =
+      form.tradeType === "exactInput" && form.inputs[0]
+        ? getToken(deployment, form.inputs[0].chainId, form.inputs[0].token)
+        : undefined;
+    const token =
+      getRouteTokensForChain(
+        deployment,
+        chainId,
+        "destination",
+        advancedOpen ? form.provider : "auto",
+        sourceToken,
+      )[0] ?? getTokensForChain(deployment, chainId)[0];
+    if (!token) return;
     patchForm({
       destinationChainId: chainId,
       destinationTokenAddress: token.address,
@@ -179,13 +215,36 @@ export default function Page() {
   function setSimpleInput(patch: Partial<InputLeg>) {
     if (!deployment || !form) return;
     const current =
-      form.inputs[0] ?? defaultInputLeg(deployment, form.destinationChainId);
+      form.inputs[0] ??
+      defaultInputLeg(
+        deployment,
+        form.destinationChainId,
+        getToken(
+          deployment,
+          form.destinationChainId,
+          form.destinationTokenAddress,
+        ),
+        advancedOpen ? form.provider : "auto",
+      );
     patchForm({ inputs: [{ ...current, ...patch }, ...form.inputs.slice(1)] });
   }
 
   function setSimpleInputChain(chainId: number) {
-    if (!deployment) return;
-    const token = getTokensForChain(deployment, chainId)[0];
+    if (!deployment || !form) return;
+    const destinationToken = getToken(
+      deployment,
+      form.destinationChainId,
+      form.destinationTokenAddress,
+    );
+    const token =
+      getRouteTokensForChain(
+        deployment,
+        chainId,
+        "source",
+        advancedOpen ? form.provider : "auto",
+        destinationToken,
+      )[0] ?? getTokensForChain(deployment, chainId)[0];
+    if (!token) return;
     setSimpleInput({ chainId, token: token.address });
   }
 
@@ -346,7 +405,30 @@ export default function Page() {
   const inputToken = sourceLeg
     ? getToken(deployment, sourceLeg.chainId, sourceLeg.token)
     : null;
-  const canQuote = Boolean(effectiveForm.sender && !busy);
+  const selectionProvider = effectiveForm.provider;
+  const destinationChainOptions = includeCurrentChain(
+    getRouteChains(
+      deployment,
+      "destination",
+      selectionProvider,
+      isExactInput ? inputToken ?? undefined : undefined,
+    ),
+    deployment,
+    form.destinationChainId,
+  );
+  const sourceChainOptions = includeCurrentChain(
+    getRouteChains(
+      deployment,
+      "source",
+      selectionProvider,
+      destinationToken,
+    ),
+    deployment,
+    sourceLeg?.chainId,
+  );
+  const canQuote = Boolean(
+    effectiveForm.sender && !busy && routeIssues.length === 0,
+  );
   const relaySelected = form.provider === "relay";
 
   return (
@@ -384,6 +466,18 @@ export default function Page() {
             <strong>Heads up</strong>
             {warnings.map((warning, index) => (
               <p key={index}>{warning}</p>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {routeIssues.length ? (
+        <div className="statusBanner warning">
+          <span className="dot" />
+          <div>
+            <strong>Choose a compatible route</strong>
+            {routeIssues.map((issue) => (
+              <p key={issue}>{issue}</p>
             ))}
           </div>
         </div>
@@ -440,7 +534,7 @@ export default function Page() {
                           setSimpleInputChain(Number(event.target.value))
                         }
                       >
-                        {deployment.chains.map((chain) => (
+                        {sourceChainOptions.map((chain) => (
                           <option key={chain.chainId} value={chain.chainId}>
                             {chain.name}
                           </option>
@@ -450,6 +544,9 @@ export default function Page() {
                         deployment={deployment}
                         chainId={sourceLeg.chainId}
                         value={sourceLeg.token}
+                        role="source"
+                        provider={selectionProvider}
+                        oppositeToken={destinationToken}
                         onChange={(token) => setSimpleInput({ token })}
                         onTokensLoaded={registerTokens}
                       />
@@ -519,7 +616,7 @@ export default function Page() {
                       setDestinationChain(Number(event.target.value))
                     }
                   >
-                    {deployment.chains.map((chain) => (
+                    {destinationChainOptions.map((chain) => (
                       <option key={chain.chainId} value={chain.chainId}>
                         {chain.name}
                       </option>
@@ -529,6 +626,9 @@ export default function Page() {
                     deployment={deployment}
                     chainId={form.destinationChainId}
                     value={form.destinationTokenAddress}
+                    role="destination"
+                    provider={selectionProvider}
+                    oppositeToken={isExactInput ? inputToken ?? undefined : undefined}
                     onChange={(token) =>
                       patchForm({ destinationTokenAddress: token })
                     }
@@ -672,6 +772,8 @@ export default function Page() {
                       <InputsEditor
                         deployment={deployment}
                         value={form.inputs}
+                        destinationToken={destinationToken}
+                        provider={selectionProvider}
                         onChange={(inputs) => patchForm({ inputs })}
                         onTokensLoaded={registerTokens}
                       />
@@ -682,6 +784,8 @@ export default function Page() {
                       <SourceSelector
                         deployment={deployment}
                         value={form.sources}
+                        destinationToken={destinationToken}
+                        provider={selectionProvider}
                         onChange={(sources) => patchForm({ sources })}
                         onTokensLoaded={registerTokens}
                       />
@@ -1229,16 +1333,23 @@ function StatusPanel({
 function InputsEditor({
   deployment,
   value,
+  destinationToken,
+  provider,
   onChange,
   onTokensLoaded,
 }: {
   deployment: DeploymentResponse;
   value: InputLeg[];
+  destinationToken: SelectableToken;
+  provider: ProviderChoice;
   onChange: (next: InputLeg[]) => void;
   onTokensLoaded: (tokens: DeploymentToken[]) => void;
 }) {
   function addLeg() {
-    onChange([...value, defaultInputLeg(deployment)]);
+    onChange([
+      ...value,
+      defaultInputLeg(deployment, destinationToken.chainId, destinationToken, provider),
+    ]);
   }
 
   function updateLeg(index: number, patch: Partial<InputLeg>) {
@@ -1262,6 +1373,11 @@ function InputsEditor({
       {value.map((leg, index) => {
         const chain = getChain(deployment, leg.chainId);
         const token = getToken(deployment, leg.chainId, leg.token);
+        const chainOptions = includeCurrentChain(
+          getRouteChains(deployment, "source", provider, destinationToken),
+          deployment,
+          leg.chainId,
+        );
         return (
           <div className="sourceCard" key={`${leg.chainId}-${index}`}>
             <div className="sourceHeader">
@@ -1281,11 +1397,19 @@ function InputsEditor({
                   value={leg.chainId}
                   onChange={(event) => {
                     const chainId = Number(event.target.value);
-                    const nextToken = getTokensForChain(deployment, chainId)[0];
+                    const nextToken =
+                      getRouteTokensForChain(
+                        deployment,
+                        chainId,
+                        "source",
+                        provider,
+                        destinationToken,
+                      )[0] ?? getTokensForChain(deployment, chainId)[0];
+                    if (!nextToken) return;
                     updateLeg(index, { chainId, token: nextToken.address });
                   }}
                 >
-                  {deployment.chains.map((nextChain) => (
+                  {chainOptions.map((nextChain) => (
                     <option key={nextChain.chainId} value={nextChain.chainId}>
                       {nextChain.name} · {nextChain.chainId}
                     </option>
@@ -1308,6 +1432,9 @@ function InputsEditor({
                   deployment={deployment}
                   chainId={leg.chainId}
                   value={leg.token}
+                  role="source"
+                  provider={provider}
+                  oppositeToken={destinationToken}
                   onChange={(address) => updateLeg(index, { token: address })}
                   onTokensLoaded={onTokensLoaded}
                 />
@@ -1454,7 +1581,16 @@ function buildEffectiveForm(
       form.tradeType === "exactInput"
         ? [
             form.inputs[0] ??
-              defaultInputLeg(deployment, form.destinationChainId),
+              defaultInputLeg(
+                deployment,
+                form.destinationChainId,
+                getToken(
+                  deployment,
+                  form.destinationChainId,
+                  form.destinationTokenAddress,
+                ),
+                "auto",
+              ),
           ]
         : [],
   };
@@ -1463,14 +1599,34 @@ function buildEffectiveForm(
 function defaultInputLeg(
   deployment: DeploymentResponse,
   destinationChainId?: number,
+  destinationToken?: SelectableToken,
+  provider: ProviderChoice = "auto",
 ): InputLeg {
+  const compatibleChains = getRouteChains(
+    deployment,
+    "source",
+    provider,
+    destinationToken,
+  );
   const chain =
+    compatibleChains.find((item) => item.chainId !== destinationChainId) ??
+    compatibleChains[0] ??
     deployment.chains.find((item) => item.chainId !== destinationChainId) ??
     deployment.chains[0];
   if (!chain) {
     throw new Error("Deployment has no configured chains");
   }
-  const token = getTokensForChain(deployment, chain.chainId)[0];
+  const token =
+    getRouteTokensForChain(
+      deployment,
+      chain.chainId,
+      "source",
+      provider,
+      destinationToken,
+    )[0] ?? getTokensForChain(deployment, chain.chainId)[0];
+  if (!token) {
+    throw new Error(`No token is available on ${chain.name}`);
+  }
   return { chainId: chain.chainId, token: token.address, amount: "1" };
 }
 
@@ -1502,6 +1658,21 @@ function providerNames(
     typeof provider === "string" ? provider : provider.id,
   ))];
   return ids.length > 0 ? ids.join(", ") : "No provider";
+}
+
+function includeCurrentChain(
+  compatibleChains: DeploymentChain[],
+  deployment: DeploymentResponse,
+  currentChainId?: number,
+): DeploymentChain[] {
+  if (
+    currentChainId === undefined ||
+    compatibleChains.some((chain) => chain.chainId === currentChainId)
+  ) {
+    return compatibleChains;
+  }
+  const current = deployment.chains.find((chain) => chain.chainId === currentChainId);
+  return current ? [current, ...compatibleChains] : compatibleChains;
 }
 
 function shortHash(value: string) {

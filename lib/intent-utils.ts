@@ -153,6 +153,225 @@ export type TradeType = "exactInput" | "exactOutput";
 // "auto" maps to an empty preferredProviders array (best of all).
 export type ProviderChoice = "auto" | ProviderId;
 
+export type RouteRole = "source" | "destination";
+
+type ProviderSupportEntry = ProviderSupport | ProviderId;
+
+function providerId(entry: ProviderSupportEntry): ProviderId {
+  return typeof entry === "string" ? entry : entry.id;
+}
+
+function supportEntries(
+  supports: readonly ProviderSupportEntry[] | undefined,
+): readonly ProviderSupportEntry[] {
+  return supports ?? [];
+}
+
+/** Returns the providers that can serve both ends of a selected route. */
+export function getRouteProviderIds(
+  sourceSupports: readonly ProviderSupportEntry[] | undefined,
+  destinationSupports: readonly ProviderSupportEntry[] | undefined,
+): ProviderId[] {
+  const destinationIds = new Set(
+    supportEntries(destinationSupports).map(providerId),
+  );
+  return [
+    ...new Set(
+      supportEntries(sourceSupports)
+        .map(providerId)
+        .filter((id) => destinationIds.has(id)),
+    ),
+  ];
+}
+
+function supportForProvider(
+  supports: readonly ProviderSupportEntry[] | undefined,
+  provider: ProviderId,
+): ProviderSupport | undefined {
+  const entry = supportEntries(supports).find((candidate) => providerId(candidate) === provider);
+  return typeof entry === "object" ? entry : undefined;
+}
+
+/** Provider intersection for a concrete source/destination token pair. */
+export function getTokenRouteProviderIds(
+  source: Pick<SelectableToken, "asSource">,
+  destination: Pick<SelectableToken, "asDestination">,
+): ProviderId[] {
+  return getRouteProviderIds(source.asSource, destination.asDestination).filter((id) => {
+    if (id !== "nexus-v2") return true;
+    const sourceCurrency = supportForProvider(source.asSource, id)?.currencyId;
+    const destinationCurrency = supportForProvider(
+      destination.asDestination,
+      id,
+    )?.currencyId;
+    return (
+      sourceCurrency === undefined ||
+      destinationCurrency === undefined ||
+      String(sourceCurrency).toLowerCase() === String(destinationCurrency).toLowerCase()
+    );
+  });
+}
+
+/** Whether an entry is supported by the selected provider, or by any provider in auto mode. */
+export function hasProviderSupport(
+  supports: readonly ProviderSupportEntry[] | undefined,
+  provider: ProviderChoice,
+): boolean {
+  const entries = supportEntries(supports);
+  return provider === "auto"
+    ? entries.length > 0
+    : entries.some((entry) => providerId(entry) === provider);
+}
+
+/**
+ * Checks the provider metadata for a source/destination token pair. Nexus additionally requires
+ * the two token entries to carry the same currency id; Mayan and Relay use their catalog support
+ * as the pair-level signal.
+ */
+export function areTokensRouteCompatible(
+  source: Pick<SelectableToken, "asSource">,
+  destination: Pick<SelectableToken, "asDestination">,
+  provider: ProviderChoice = "auto",
+): boolean {
+  return getTokenRouteProviderIds(source, destination).some(
+    (id) => provider === "auto" || provider === id,
+  );
+}
+
+/** Lists tokens on a chain that are valid for one side of the currently selected route. */
+export function getRouteTokensForChain(
+  deployment: DeploymentResponse,
+  chainId: number,
+  role: RouteRole,
+  provider: ProviderChoice = "auto",
+  oppositeToken?: SelectableToken,
+): SelectableToken[] {
+  return getTokensForChain(deployment, chainId).filter((token) => {
+    const ownSupports = role === "source" ? token.asSource : token.asDestination;
+    if (!hasProviderSupport(ownSupports, provider)) return false;
+    if (!oppositeToken) return true;
+    return role === "source"
+      ? areTokensRouteCompatible(token, oppositeToken, provider)
+      : areTokensRouteCompatible(oppositeToken, token, provider);
+  });
+}
+
+/** Lists chains that can participate in the selected route on the requested side. */
+export function getRouteChains(
+  deployment: DeploymentResponse,
+  role: RouteRole,
+  provider: ProviderChoice = "auto",
+  oppositeToken?: SelectableToken,
+): DeploymentChain[] {
+  return deployment.chains.filter((chain) => {
+    const ownSupports = role === "source" ? chain.asSource : chain.asDestination;
+    if (!hasProviderSupport(ownSupports, provider)) return false;
+    if (!oppositeToken) return true;
+
+    const oppositeSupports =
+      role === "source" ? oppositeToken.asDestination : oppositeToken.asSource;
+    return getRouteProviderIds(ownSupports, oppositeSupports).some(
+      (id) => provider === "auto" || provider === id,
+    );
+  });
+}
+
+/** Returns user-facing preflight issues for a form before it reaches the quote endpoint. */
+export function findRouteSelectionIssues(
+  deployment: DeploymentResponse,
+  form: IntentFormState,
+): string[] {
+  const destination = getToken(
+    deployment,
+    form.destinationChainId,
+    form.destinationTokenAddress,
+  );
+  const provider = form.provider;
+  const destinationChain = getChain(deployment, form.destinationChainId);
+  const providerLabel = provider === "auto" ? "any enabled provider" : provider;
+  const issues: string[] = [];
+  const exactInputProviderSets: ProviderId[][] = [];
+
+  if (!hasProviderSupport(destination.asDestination, provider)) {
+    issues.push(
+      `${destination.symbol} is not available as a destination on ${destinationChain.name} for ${providerLabel}.`,
+    );
+  }
+
+  const addSourceIssue = (
+    chainId: number,
+    tokenAddress: Hex,
+    reportIssue = true,
+  ): ProviderId[] => {
+    const sourceChain = getChain(deployment, chainId);
+    const source = getToken(deployment, chainId, tokenAddress);
+    if (!hasProviderSupport(source.asSource, provider)) {
+      if (!reportIssue) return [];
+      issues.push(
+        `${source.symbol} is not available as a source on ${sourceChain.name} for ${providerLabel}.`,
+      );
+      return [];
+    }
+    const routeProviders = getTokenRouteProviderIds(source, destination).filter(
+      (id) => provider === "auto" || provider === id,
+    );
+    if (routeProviders.length === 0 && reportIssue) {
+      issues.push(
+        `${source.symbol} on ${sourceChain.name} cannot be routed to ${destination.symbol} on ${destinationChain.name} for ${providerLabel}.`,
+      );
+    }
+    return routeProviders;
+  };
+
+  if (form.tradeType === "exactInput") {
+    if (form.inputs.length === 0) {
+      issues.push("Exact-in routes need at least one source input.");
+    }
+    for (const input of form.inputs) {
+      exactInputProviderSets.push(addSourceIssue(input.chainId, input.token));
+    }
+    if (
+      exactInputProviderSets.length > 1 &&
+      exactInputProviderSets[0] &&
+      !exactInputProviderSets.slice(1).reduce(
+        (common, current) => common.filter((id) => current.includes(id)),
+        exactInputProviderSets[0],
+      ).length
+    ) {
+      issues.push("No single provider can route every exact-in input to this destination.");
+    }
+  } else {
+    for (const source of form.sources) {
+      const sourceChain = getChain(deployment, source.sourceChain);
+      if (source.tokens.length === 0) {
+        const sourceProviders = getRouteProviderIds(
+          sourceChain.asSource,
+          destination.asDestination,
+        );
+        if (
+          sourceProviders.length === 0 ||
+          (provider !== "auto" && !sourceProviders.includes(provider))
+        ) {
+          issues.push(
+            `No provider can source a compatible token from ${sourceChain.name} to ${destination.symbol} on ${destinationChain.name}.`,
+          );
+        }
+        continue;
+      }
+      const routeProviders = source.tokens.flatMap((token) =>
+        addSourceIssue(source.sourceChain, token, false),
+      );
+      if (routeProviders.length === 0) {
+        issues.push(
+          `None of the selected tokens on ${sourceChain.name} can be routed to ${destination.symbol} on ${destinationChain.name}.`,
+        );
+      }
+    }
+  }
+
+  return [...new Set(issues)];
+}
+
 export type IntentFormState = {
   sender: Hex;
   recipient: string;
@@ -438,7 +657,12 @@ export function buildInitialIntentForm(
   sender = "" as Hex,
 ): IntentFormState {
   const firstChain = getFirstChain(deployment);
-  const firstToken = getTokensForChain(deployment, firstChain.chainId)[0];
+  const firstToken =
+    getRouteTokensForChain(deployment, firstChain.chainId, "destination")[0] ??
+    getTokensForChain(deployment, firstChain.chainId)[0];
+  if (!firstToken) {
+    throw new Error(`No token is available on ${firstChain.name}`);
+  }
   return {
     sender,
     recipient: "",

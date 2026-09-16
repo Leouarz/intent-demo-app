@@ -1,11 +1,14 @@
 "use client";
 
 import {
+  getRouteChains,
   getTokensForChain,
   type DeploymentResponse,
   type DeploymentToken,
   type Hex,
+  type ProviderChoice,
   type SourcePreference,
+  type SelectableToken,
 } from "../lib/intent-utils";
 import { TokenSelector } from "./token-selector";
 
@@ -14,6 +17,8 @@ type Props = {
   value: SourcePreference[];
   onChange: (next: SourcePreference[]) => void;
   onTokensLoaded: (tokens: DeploymentToken[]) => void;
+  destinationToken: SelectableToken;
+  provider: ProviderChoice;
 };
 
 export function SourceSelector({
@@ -21,6 +26,8 @@ export function SourceSelector({
   value,
   onChange,
   onTokensLoaded,
+  destinationToken,
+  provider,
 }: Props) {
   function updateSource(index: number, patch: Partial<SourcePreference>) {
     onChange(
@@ -41,7 +48,9 @@ export function SourceSelector({
   }
 
   function addSource() {
-    const firstChain = deployment.chains[0];
+    const firstChain =
+      getRouteChains(deployment, "source", provider, destinationToken)[0] ??
+      deployment.chains[0];
     if (!firstChain) return;
     onChange([...value, { sourceChain: firstChain.chainId, tokens: [] }]);
   }
@@ -94,6 +103,17 @@ export function SourceSelector({
       ) : null}
 
       {value.map((source, index) => {
+        const compatibleChains = getRouteChains(
+          deployment,
+          "source",
+          provider,
+          destinationToken,
+        );
+        const chainOptions = includeCurrentChain(
+          compatibleChains,
+          deployment,
+          source.sourceChain,
+        );
         return (
           <div className="sourceCard" key={`${source.sourceChain}-${index}`}>
             <div className="sourceHeader">
@@ -134,7 +154,7 @@ export function SourceSelector({
                   })
                 }
               >
-                {deployment.chains.map((chain) => (
+                {chainOptions.map((chain) => (
                   <option key={chain.chainId} value={chain.chainId}>
                     {chain.name} · {chain.chainId}
                   </option>
@@ -148,6 +168,9 @@ export function SourceSelector({
                 chainId={source.sourceChain}
                 value=""
                 placeholder="Add a source token"
+                role="source"
+                provider={provider}
+                oppositeToken={destinationToken}
                 onChange={(token) =>
                   updateSource(index, {
                     tokens: addToken(source, token),
@@ -220,4 +243,16 @@ export function SourceSelector({
       </button>
     </div>
   );
+}
+
+function includeCurrentChain(
+  compatibleChains: DeploymentResponse["chains"],
+  deployment: DeploymentResponse,
+  currentChainId: number,
+) {
+  if (compatibleChains.some((chain) => chain.chainId === currentChainId)) {
+    return compatibleChains;
+  }
+  const current = deployment.chains.find((chain) => chain.chainId === currentChainId);
+  return current ? [current, ...compatibleChains] : compatibleChains;
 }

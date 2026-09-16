@@ -6,9 +6,12 @@ import { fetchIntentTokens } from "../lib/intent-flow";
 import {
   getTokensForChain,
   getUsableLogo,
+  getRouteTokensForChain,
   type DeploymentResponse,
   type DeploymentToken,
   type Hex,
+  type ProviderChoice,
+  type RouteRole,
   type SelectableToken,
 } from "../lib/intent-utils";
 
@@ -19,6 +22,9 @@ type Props = {
   onChange: (address: Hex) => void;
   onTokensLoaded?: (tokens: DeploymentToken[]) => void;
   placeholder?: string;
+  role?: RouteRole;
+  provider?: ProviderChoice;
+  oppositeToken?: SelectableToken;
 };
 
 export function TokenSelector({
@@ -28,6 +34,9 @@ export function TokenSelector({
   onChange,
   onTokensLoaded,
   placeholder = "Select token",
+  role,
+  provider = "auto",
+  oppositeToken,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -49,8 +58,16 @@ export function TokenSelector({
       ...deployment,
       tokens: remoteTokens ?? deployment.tokens,
     };
-    return getTokensForChain(loadedDeployment, chainId);
-  }, [chainId, deployment, remoteTokens]);
+    return role
+      ? getRouteTokensForChain(
+          loadedDeployment,
+          chainId,
+          role,
+          provider,
+          oppositeToken,
+        )
+      : getTokensForChain(loadedDeployment, chainId);
+  }, [chainId, deployment, oppositeToken, provider, remoteTokens, role]);
 
   const selected = options.find(
     (token) => token.address.toLowerCase() === value.toLowerCase(),
