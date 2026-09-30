@@ -19,6 +19,7 @@ type Props = {
   onTokensLoaded: (tokens: DeploymentToken[]) => void;
   destinationToken: SelectableToken;
   provider: ProviderChoice;
+  allowUnverifiedTokens: boolean;
 };
 
 export function SourceSelector({
@@ -28,6 +29,7 @@ export function SourceSelector({
   onTokensLoaded,
   destinationToken,
   provider,
+  allowUnverifiedTokens,
 }: Props) {
   function updateSource(index: number, patch: Partial<SourcePreference>) {
     onChange(
@@ -91,14 +93,17 @@ export function SourceSelector({
     const token = getTokensForChain(deployment, sourceChain).find(
       (item) => item.address.toLowerCase() === tokenAddress.toLowerCase(),
     );
-    return token ? `${token.symbol} · ${token.address}` : tokenAddress;
+    if (!token) return tokenAddress;
+    const verification = token.verified ? "" : " · Unverified";
+    return `${token.symbol}${verification} · ${token.address}`;
   }
 
   return (
     <div className="tokenList">
       {value.length === 0 ? (
         <div className="empty">
-          No source preference means middleware may use all eligible balances.
+          No source preference means middleware may use verified eligible
+          balances. Unverified balances require selecting their exact token here.
         </div>
       ) : null}
 
@@ -171,6 +176,7 @@ export function SourceSelector({
                 role="source"
                 provider={provider}
                 oppositeToken={destinationToken}
+                allowUnverifiedTokens={allowUnverifiedTokens}
                 onChange={(token) =>
                   updateSource(index, {
                     tokens: addToken(source, token),
@@ -229,8 +235,9 @@ export function SourceSelector({
               ))}
               {source.tokens.length === 0 ? (
                 <div className="empty">
-                  No token selected means middleware may use any token on this
-                  chain.
+                  No token selected means middleware may use verified eligible
+                  balances on this chain. Select an exact token to include an
+                  unverified source.
                 </div>
               ) : null}
             </div>

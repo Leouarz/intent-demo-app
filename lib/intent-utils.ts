@@ -33,6 +33,7 @@ export type DeploymentToken = {
   address: string;
   decimals: number;
   isNative: boolean;
+  verified: boolean;
   logo?: string;
   coingeckoId?: string;
   sourceKind?: "bridge" | "swap";
@@ -107,6 +108,7 @@ export type SelectableToken = {
   name: string;
   address: Hex;
   decimals: number;
+  verified: boolean;
   logo?: string;
   native: boolean;
   sourceKind: "bridge" | "swap";
@@ -123,6 +125,7 @@ export type IntentBalance = {
   symbol: string;
   decimals: number;
   isNative: boolean;
+  verified: boolean;
   logo?: string;
   coingeckoId?: string;
   providers: Array<{ id: ProviderId; currencyId?: number | string }>;
@@ -280,6 +283,7 @@ export function getRouteChains(
 export function findRouteSelectionIssues(
   deployment: DeploymentResponse,
   form: IntentFormState,
+  allowUnverifiedTokens = false,
 ): string[] {
   const destination = getToken(
     deployment,
@@ -291,6 +295,12 @@ export function findRouteSelectionIssues(
   const providerLabel = provider === "auto" ? "any enabled provider" : provider;
   const issues: string[] = [];
   const exactInputProviderSets: ProviderId[][] = [];
+
+  if (!allowUnverifiedTokens && !destination.verified) {
+    issues.push(
+      "The destination token is unverified. Enable Allow unverified tokens to use it.",
+    );
+  }
 
   if (!hasProviderSupport(destination.asDestination, provider)) {
     issues.push(
@@ -305,6 +315,14 @@ export function findRouteSelectionIssues(
   ): ProviderId[] => {
     const sourceChain = getChain(deployment, chainId);
     const source = getToken(deployment, chainId, tokenAddress);
+    if (!allowUnverifiedTokens && !source.verified) {
+      if (reportIssue) {
+        issues.push(
+          `The source token ${source.symbol} is unverified. Enable Allow unverified tokens to use it.`,
+        );
+      }
+      return [];
+    }
     if (!hasProviderSupport(source.asSource, provider)) {
       if (!reportIssue) return [];
       issues.push(
@@ -357,6 +375,17 @@ export function findRouteSelectionIssues(
           );
         }
         continue;
+      }
+      if (!allowUnverifiedTokens) {
+        const unverifiedSource = source.tokens
+          .map((address) => getToken(deployment, source.sourceChain, address))
+          .find((token) => !token.verified);
+        if (unverifiedSource) {
+          issues.push(
+            `The source token ${unverifiedSource.symbol} is unverified. Enable Allow unverified tokens to use it.`,
+          );
+          continue;
+        }
       }
       const routeProviders = source.tokens.flatMap((token) =>
         addSourceIssue(source.sourceChain, token, false),
@@ -727,6 +756,7 @@ export function getTokensForChain(
       name: chain.nativeCurrency.name,
       address: ZERO_ADDRESS,
       decimals: chain.nativeCurrency.decimals,
+      verified: true,
       logo: chain.nativeCurrency.logo,
       native: true,
       sourceKind: "bridge",
@@ -741,6 +771,7 @@ export function getTokensForChain(
       name: token.name,
       address: assertAddress(token.address, `${token.symbol} token`) as Hex,
       decimals: token.decimals,
+      verified: token.verified,
       logo: token.logo,
       native: false,
       sourceKind: token.sourceKind ?? "bridge",

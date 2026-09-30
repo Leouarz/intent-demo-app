@@ -70,6 +70,7 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [allowUnverifiedTokens, setAllowUnverifiedTokens] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,11 +121,15 @@ export default function Page() {
   const routeIssues = useMemo(() => {
     if (!deployment || !effectiveForm) return [];
     try {
-      return findRouteSelectionIssues(deployment, effectiveForm);
+      return findRouteSelectionIssues(
+        deployment,
+        effectiveForm,
+        allowUnverifiedTokens,
+      );
     } catch (nextError) {
       return [readError(nextError)];
     }
-  }, [deployment, effectiveForm]);
+  }, [allowUnverifiedTokens, deployment, effectiveForm]);
 
   const sourceLeg = form?.inputs[0] ?? null;
 
@@ -204,7 +209,8 @@ export default function Page() {
         "destination",
         advancedOpen ? form.provider : "auto",
         sourceToken,
-      )[0] ?? getTokensForChain(deployment, chainId)[0];
+      ).find((candidate) => candidate.verified) ??
+      getTokensForChain(deployment, chainId).find((candidate) => candidate.verified);
     if (!token) return;
     patchForm({
       destinationChainId: chainId,
@@ -243,7 +249,8 @@ export default function Page() {
         "source",
         advancedOpen ? form.provider : "auto",
         destinationToken,
-      )[0] ?? getTokensForChain(deployment, chainId)[0];
+      ).find((candidate) => candidate.verified) ??
+      getTokensForChain(deployment, chainId).find((candidate) => candidate.verified);
     if (!token) return;
     setSimpleInput({ chainId, token: token.address });
   }
@@ -336,7 +343,13 @@ export default function Page() {
   }
 
   async function runWalletFlow() {
-    if (!quote || quote.isExecutable === false || !effectiveForm?.sender) return;
+    if (
+      !quote ||
+      quote.isExecutable === false ||
+      routeIssues.length > 0 ||
+      !effectiveForm?.sender
+    )
+      return;
     try {
       setBusy(true);
       setPolling(false);
@@ -470,14 +483,33 @@ export default function Page() {
             routes against <code>{MIDDLEWARE_URL}</code>.
           </p>
         </div>
-        <button
-          type="button"
-          className="walletButton"
-          onClick={connectWallet}
-          disabled={busy}
-        >
-          {form.sender ? shortAddress(form.sender) : "Connect wallet"}
-        </button>
+        <div className="heroActions">
+          <label className="unverifiedToggle">
+            <input
+              type="checkbox"
+              checked={allowUnverifiedTokens}
+              onChange={(event) =>
+                setAllowUnverifiedTokens(event.target.checked)
+              }
+            />
+            <span>
+              <strong>Allow unverified tokens</strong>
+              <small>
+                {allowUnverifiedTokens
+                  ? "Enabled for this session"
+                  : "Off by default"}
+              </small>
+            </span>
+          </label>
+          <button
+            type="button"
+            className="walletButton"
+            onClick={connectWallet}
+            disabled={busy}
+          >
+            {form.sender ? shortAddress(form.sender) : "Connect wallet"}
+          </button>
+        </div>
       </section>
 
       <StatusBanner status={status} error={error} busy={busy || polling} />
@@ -578,6 +610,7 @@ export default function Page() {
                         role="source"
                         provider={selectionProvider}
                         oppositeToken={destinationToken}
+                        allowUnverifiedTokens={allowUnverifiedTokens}
                         onChange={(token) => setSimpleInput({ token })}
                         onTokensLoaded={registerTokens}
                       />
@@ -603,7 +636,8 @@ export default function Page() {
                     </div>
                     <p className="hint">
                       Open advanced options to choose ordered source chains and
-                      tokens. Leave it empty to use all eligible balances.
+                      tokens. Leave it empty to use verified eligible balances;
+                      select a token to explicitly include an unverified source.
                     </p>
                   </>
                 )}
@@ -660,6 +694,7 @@ export default function Page() {
                     role="destination"
                     provider={selectionProvider}
                     oppositeToken={isExactInput ? inputToken ?? undefined : undefined}
+                    allowUnverifiedTokens={allowUnverifiedTokens}
                     onChange={(token) =>
                       patchForm({ destinationTokenAddress: token })
                     }
@@ -805,6 +840,7 @@ export default function Page() {
                         value={form.inputs}
                         destinationToken={destinationToken}
                         provider={selectionProvider}
+                        allowUnverifiedTokens={allowUnverifiedTokens}
                         onChange={(inputs) => patchForm({ inputs })}
                         onTokensLoaded={registerTokens}
                       />
@@ -817,6 +853,7 @@ export default function Page() {
                         value={form.sources}
                         destinationToken={destinationToken}
                         provider={selectionProvider}
+                        allowUnverifiedTokens={allowUnverifiedTokens}
                         onChange={(sources) => patchForm({ sources })}
                         onTokensLoaded={registerTokens}
                       />
@@ -831,6 +868,7 @@ export default function Page() {
             quote={quote}
             deployment={deployment}
             form={effectiveForm}
+            canRunFlow={routeIssues.length === 0}
             onRun={runWalletFlow}
             onLog={() => {
               if (quote) {
@@ -928,6 +966,7 @@ function SelectionSummary({
           {token.native
             ? "Native token"
             : `${token.name} · ${shortAddress(token.address)}`}
+          {!token.verified ? " · Unverified" : ""}
         </span>
       </div>
     </div>
@@ -971,7 +1010,8 @@ function InputSummary({
               className="inputChip"
               key={`${input.chainId}-${input.token}-${index}`}
             >
-              {input.amount || "0"} {token.symbol} on {chain.name}
+              {input.amount || "0"} {token.symbol}
+              {!token.verified ? " · Unverified" : ""} on {chain.name}
             </span>
           );
         })}
@@ -984,6 +1024,7 @@ function QuotePanel({
   quote,
   deployment,
   form,
+  canRunFlow,
   onRun,
   onLog,
   busy,
@@ -992,6 +1033,7 @@ function QuotePanel({
   quote: IntentQuote | null;
   deployment: DeploymentResponse;
   form: IntentFormState;
+  canRunFlow: boolean;
   onRun: () => void;
   onLog: () => void;
   busy: boolean;
@@ -1149,7 +1191,7 @@ function QuotePanel({
           type="button"
           className="primary"
           onClick={onRun}
-          disabled={busy || quote.isExecutable === false}
+          disabled={busy || quote.isExecutable === false || !canRunFlow}
         >
           {polling
             ? "Polling status"
@@ -1370,6 +1412,7 @@ function InputsEditor({
   value,
   destinationToken,
   provider,
+  allowUnverifiedTokens,
   onChange,
   onTokensLoaded,
 }: {
@@ -1377,6 +1420,7 @@ function InputsEditor({
   value: InputLeg[];
   destinationToken: SelectableToken;
   provider: ProviderChoice;
+  allowUnverifiedTokens: boolean;
   onChange: (next: InputLeg[]) => void;
   onTokensLoaded: (tokens: DeploymentToken[]) => void;
 }) {
@@ -1439,7 +1483,10 @@ function InputsEditor({
                         "source",
                         provider,
                         destinationToken,
-                      )[0] ?? getTokensForChain(deployment, chainId)[0];
+                      ).find((candidate) => candidate.verified) ??
+                      getTokensForChain(deployment, chainId).find(
+                        (candidate) => candidate.verified,
+                      );
                     if (!nextToken) return;
                     updateLeg(index, { chainId, token: nextToken.address });
                   }}
@@ -1470,6 +1517,7 @@ function InputsEditor({
                   role="source"
                   provider={provider}
                   oppositeToken={destinationToken}
+                  allowUnverifiedTokens={allowUnverifiedTokens}
                   onChange={(address) => updateLeg(index, { token: address })}
                   onTokensLoaded={onTokensLoaded}
                 />
@@ -1493,14 +1541,15 @@ function BalanceList({
   deployment: DeploymentResponse;
   balances: IntentBalances | null;
 }) {
-  const grouped = new Map<string, IntentBalance[]>();
-  for (const balance of balances?.balances ?? []) {
-    const chainBalances = grouped.get(balance.chainId) ?? [];
-    chainBalances.push(balance);
-    grouped.set(balance.chainId, chainBalances);
-  }
+  const allBalances = balances?.balances ?? [];
+  const verifiedBalances = allBalances.filter((balance) => balance.verified);
+  const unverifiedBalances = allBalances.filter((balance) => !balance.verified);
 
-  const totalUsd = (balances?.balances ?? []).reduce(
+  const verifiedTotalUsd = verifiedBalances.reduce(
+    (sum, balance) => sum + (balance.valueUsd ?? 0),
+    0,
+  );
+  const unverifiedTotalUsd = unverifiedBalances.reduce(
     (sum, balance) => sum + (balance.valueUsd ?? 0),
     0,
   );
@@ -1509,11 +1558,13 @@ function BalanceList({
     <div className="panel">
       <div className="panelHeader balancePanelHeader">
         <div>
-          <span className="eyebrow">Balances</span>
-          <h2>{balances ? `$${totalUsd.toFixed(2)}` : "Wallet assets"}</h2>
+          <span className="eyebrow">Verified balances</span>
+          <h2>
+            {balances ? `$${verifiedTotalUsd.toFixed(2)}` : "Wallet assets"}
+          </h2>
         </div>
         {balances ? (
-          <span className="muted">{balances.balances.length} assets</span>
+          <span className="muted">{verifiedBalances.length} assets</span>
         ) : null}
       </div>
       {!balances ? (
@@ -1527,38 +1578,69 @@ function BalanceList({
           returned.
         </div>
       ) : null}
-      <div className="balanceList">
-        {[...grouped.entries()].map(([chainRef, chainBalances]) => {
-          const chainId = Number(chainRef.replace("EVM_", ""));
-          const chain = deployment.chains.find(
-            (item) => item.chainId === chainId,
-          );
-          const chainTotalUsd = chainBalances.reduce(
-            (sum, balance) => sum + (balance.valueUsd ?? 0),
-            0,
-          );
-          return (
-            <div className="balanceGroup" key={chainRef}>
-              <div className="balanceHeader">
-                <Logo src={chain?.logo} label={chain?.name ?? chainRef} />
-                <strong>{chain?.name ?? chainRef}</strong>
-                <span>${chainTotalUsd.toFixed(2)}</span>
-              </div>
-              <div className="balanceTokenGroupList">
-                {chainBalances.map((balance) => (
-                  <BalanceTokenRow
-                    key={`${balance.chainId}-${balance.address}`}
-                    balance={balance}
-                  />
-                ))}
-              </div>
+      {verifiedBalances.length ? (
+        <BalanceChainGroups deployment={deployment} balances={verifiedBalances} />
+      ) : null}
+      {unverifiedBalances.length ? (
+        <details className="unverifiedBalanceSection">
+          <summary>
+            <strong>Unverified balances</strong>
+            <span>
+              {unverifiedBalances.length} assets · $
+              {unverifiedTotalUsd.toFixed(2)}
+            </span>
+          </summary>
+          <BalanceChainGroups deployment={deployment} balances={unverifiedBalances} />
+        </details>
+      ) : null}
+      {balances && balances.balances.length === 0 ? (
+        <div className="emptyState">No routable balances found.</div>
+      ) : null}
+    </div>
+  );
+}
+
+function BalanceChainGroups({
+  deployment,
+  balances,
+}: {
+  deployment: DeploymentResponse;
+  balances: IntentBalance[];
+}) {
+  const grouped = new Map<string, IntentBalance[]>();
+  for (const balance of balances) {
+    const chainBalances = grouped.get(balance.chainId) ?? [];
+    chainBalances.push(balance);
+    grouped.set(balance.chainId, chainBalances);
+  }
+
+  return (
+    <div className="balanceList">
+      {[...grouped.entries()].map(([chainRef, chainBalances]) => {
+        const chainId = Number(chainRef.replace("EVM_", ""));
+        const chain = deployment.chains.find((item) => item.chainId === chainId);
+        const chainTotalUsd = chainBalances.reduce(
+          (sum, balance) => sum + (balance.valueUsd ?? 0),
+          0,
+        );
+        return (
+          <div className="balanceGroup" key={chainRef}>
+            <div className="balanceHeader">
+              <Logo src={chain?.logo} label={chain?.name ?? chainRef} />
+              <strong>{chain?.name ?? chainRef}</strong>
+              <span>${chainTotalUsd.toFixed(2)}</span>
             </div>
-          );
-        })}
-        {balances && balances.balances.length === 0 ? (
-          <div className="emptyState">No routable balances found.</div>
-        ) : null}
-      </div>
+            <div className="balanceTokenGroupList">
+              {chainBalances.map((balance) => (
+                <BalanceTokenRow
+                  key={`${balance.chainId}-${balance.address}`}
+                  balance={balance}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1571,6 +1653,7 @@ function BalanceTokenRow({ balance }: { balance: IntentBalance }) {
         {formatBalanceAmount(balance.balance, balance.decimals)}{" "}
         {balance.symbol}
       </span>
+      {!balance.verified ? <em className="unverifiedBadge">Unverified</em> : null}
       <small>
         {balance.valueUsd === null
           ? balance.isNative
@@ -1658,7 +1741,10 @@ function defaultInputLeg(
       "source",
       provider,
       destinationToken,
-    )[0] ?? getTokensForChain(deployment, chain.chainId)[0];
+    ).find((candidate) => candidate.verified) ??
+    getTokensForChain(deployment, chain.chainId).find(
+      (candidate) => candidate.verified,
+    );
   if (!token) {
     throw new Error(`No token is available on ${chain.name}`);
   }

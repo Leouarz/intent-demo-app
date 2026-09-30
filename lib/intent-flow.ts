@@ -41,6 +41,7 @@ type IntentToken = {
   symbol: string;
   decimals: number;
   isNative: boolean;
+  verified: boolean;
   logo?: string;
   coingeckoId?: string;
   asSource?: ProviderSupport[];
@@ -102,12 +103,13 @@ async function fetchTokenPage(
 }
 
 function tokenParams(
-  options: { chainId?: number; limit: number },
+  options: { chainId?: number; limit: number; unverified?: boolean },
 ): URLSearchParams {
   const params = new URLSearchParams({ limit: String(options.limit) });
   if (options.chainId !== undefined) {
     params.set("chainId", `EVM_${options.chainId}`);
   }
+  if (options.unverified) params.set("unverified", "true");
   return params;
 }
 
@@ -120,6 +122,7 @@ function mapIntentToken(token: IntentToken): DeploymentToken {
     address: token.address,
     decimals: token.decimals,
     isNative: token.isNative,
+    verified: token.verified === true,
     logo: token.logo,
     coingeckoId: token.coingeckoId,
     asSource: token.asSource ?? [],
@@ -138,13 +141,18 @@ export async function fetchIntentTokens(options: {
   chainId?: number;
   search?: string;
   limit?: number;
+  unverified?: boolean;
 } = {}): Promise<DeploymentToken[]> {
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 1000);
   const search = options.search?.trim();
   const filters = search ? ["name", "symbol", "contract"] : [undefined];
   const pages = await Promise.all(
     filters.map((filter) => {
-      const params = tokenParams({ chainId: options.chainId, limit });
+      const params = tokenParams({
+        chainId: options.chainId,
+        limit,
+        unverified: options.unverified,
+      });
       if (search && filter) params.set(filter, search);
       return fetchTokenPage(params);
     }),

@@ -25,6 +25,7 @@ type Props = {
   role?: RouteRole;
   provider?: ProviderChoice;
   oppositeToken?: SelectableToken;
+  allowUnverifiedTokens?: boolean;
 };
 
 export function TokenSelector({
@@ -37,6 +38,7 @@ export function TokenSelector({
   role,
   provider = "auto",
   oppositeToken,
+  allowUnverifiedTokens = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -53,7 +55,7 @@ export function TokenSelector({
     maxHeight: number;
   } | null>(null);
 
-  const options = useMemo(() => {
+  const catalogOptions = useMemo(() => {
     const loadedDeployment = {
       ...deployment,
       tokens: remoteTokens ?? deployment.tokens,
@@ -68,8 +70,14 @@ export function TokenSelector({
         )
       : getTokensForChain(loadedDeployment, chainId);
   }, [chainId, deployment, oppositeToken, provider, remoteTokens, role]);
+  const options = useMemo(
+    () => allowUnverifiedTokens ? catalogOptions : catalogOptions.filter((token) => token.verified),
+    [allowUnverifiedTokens, catalogOptions],
+  );
 
-  const selected = options.find(
+  const selected = catalogOptions.find(
+    (token) => token.address.toLowerCase() === value.toLowerCase(),
+  ) ?? getTokensForChain(deployment, chainId).find(
     (token) => token.address.toLowerCase() === value.toLowerCase(),
   );
   const normalizedSearch = search.trim().toLowerCase();
@@ -101,6 +109,7 @@ export function TokenSelector({
             chainId,
             search: search.trim() || undefined,
             limit: 100,
+            unverified: allowUnverifiedTokens,
           });
           if (currentRequest !== requestId.current) return;
           setRemoteTokens(tokens);
@@ -116,7 +125,7 @@ export function TokenSelector({
     );
 
     return () => window.clearTimeout(timer);
-  }, [chainId, onTokensLoaded, open, search]);
+  }, [allowUnverifiedTokens, chainId, onTokensLoaded, open, search]);
 
   useEffect(() => {
     if (!open) return;
@@ -198,7 +207,10 @@ export function TokenSelector({
             <TokenLogo src={selected.logo} label={selected.symbol} />
             <span className="tokenSelectValue">
               <strong>{selected.symbol}</strong>
-              <small>{selected.native ? "Native token" : selected.name}</small>
+              <small>
+                {selected.native ? "Native token" : selected.name}
+                {!selected.verified ? " · Unverified" : ""}
+              </small>
             </span>
           </>
         ) : (
@@ -253,6 +265,7 @@ export function TokenSelector({
                           {token.native
                             ? "Native token"
                             : `${token.name} · ${shortAddress(token.address)}`}
+                          {!token.verified ? " · Unverified" : ""}
                         </small>
                       </span>
                     </button>

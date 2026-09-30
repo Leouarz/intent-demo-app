@@ -129,6 +129,46 @@ code {
   margin-bottom: 18px;
 }
 
+.heroActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.unverifiedToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 6px 9px;
+  cursor: pointer;
+}
+
+.unverifiedToggle input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.unverifiedToggle span {
+  display: grid;
+  gap: 1px;
+}
+
+.unverifiedToggle strong {
+  font-size: 12px;
+}
+
+.unverifiedToggle small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .brandMark {
   display: grid;
   width: 48px;
@@ -1097,6 +1137,60 @@ code {
   margin-left: auto;
 }
 
+.unverifiedBadge {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #fff1dd;
+  color: #87520b;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.unverifiedBalanceSection {
+  margin-top: 16px;
+  border: 1px solid color-mix(in srgb, #e89a2a 35%, var(--line));
+  border-radius: 8px;
+  background: #fffaf1;
+  padding: 9px 11px;
+}
+
+.unverifiedBalanceSection > summary {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.unverifiedBalanceSection > summary::-webkit-details-marker {
+  display: none;
+}
+
+.unverifiedBalanceSection > summary::after {
+  color: var(--muted);
+  content: "Show";
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.unverifiedBalanceSection[open] > summary::after {
+  content: "Hide";
+}
+
+.unverifiedBalanceSection > summary span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.unverifiedBalanceSection .balanceList {
+  margin-top: 9px;
+}
+
 .balanceWarning {
   margin-bottom: 10px;
   border-radius: 6px;
@@ -1128,6 +1222,11 @@ code {
 
   .walletButton {
     width: 100%;
+  }
+
+  .heroActions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .routeArrow {
