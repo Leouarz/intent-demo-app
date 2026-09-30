@@ -292,6 +292,33 @@ export default function Page() {
       setStatus("Requesting quote");
       const nextQuote = await requestIntentQuote(deployment, effectiveForm);
       setQuote(nextQuote);
+      if (
+        nextQuote.executionWarnings !== undefined ||
+        nextQuote.isExecutable === false
+      ) {
+        const quoteWarnings = (nextQuote.executionWarnings ?? []).flatMap(
+          (warning) => [
+            warning.message,
+            ...warning.shortfalls.map((shortfall) => {
+              const chain = getChain(deployment, shortfall.chainId);
+              const token = getToken(
+                deployment,
+                shortfall.chainId,
+                shortfall.address as Hex,
+              );
+              return (
+                `${chain.name}: ${formatBalanceAmount(shortfall.actual, token.decimals)} ` +
+                `${token.symbol} available; ${formatBalanceAmount(shortfall.required, token.decimals)} required.`
+              );
+            }),
+          ],
+        );
+        setWarnings(
+          nextQuote.isExecutable === false && quoteWarnings.length === 0
+            ? ["The middleware marked this quote as not executable."]
+            : quoteWarnings,
+        );
+      }
       try {
         setRouteCatalog(await fetchRouteCatalog(deployment, effectiveForm));
       } catch (routeError) {
@@ -309,7 +336,7 @@ export default function Page() {
   }
 
   async function runWalletFlow() {
-    if (!quote || !effectiveForm?.sender) return;
+    if (!quote || quote.isExecutable === false || !effectiveForm?.sender) return;
     try {
       setBusy(true);
       setPolling(false);
@@ -463,7 +490,11 @@ export default function Page() {
         <div className="statusBanner warning">
           <span className="dot" />
           <div>
-            <strong>Heads up</strong>
+            <strong>
+              {quote?.isExecutable === false
+                ? "Quote is not executable"
+                : "Heads up"}
+            </strong>
             {warnings.map((warning, index) => (
               <p key={index}>{warning}</p>
             ))}
@@ -1118,9 +1149,13 @@ function QuotePanel({
           type="button"
           className="primary"
           onClick={onRun}
-          disabled={busy}
+          disabled={busy || quote.isExecutable === false}
         >
-          {polling ? "Polling status" : "Run full flow"}
+          {polling
+            ? "Polling status"
+            : quote.isExecutable === false
+              ? "Not executable"
+              : "Run full flow"}
         </button>
       </div>
     </div>

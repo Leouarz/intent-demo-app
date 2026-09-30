@@ -463,6 +463,17 @@ export type IntentQuote = {
   quoteId: Hex;
   provider: ProviderId;
   tradeType: TradeType;
+  isExecutable?: boolean;
+  executionWarnings?: Array<{
+    code: "INSUFFICIENT_BALANCE";
+    message: string;
+    shortfalls: Array<{
+      chainId: number;
+      address: string;
+      required: string;
+      actual: string;
+    }>;
+  }>;
   input: IntentInputLeg[];
   sourceVerdicts: SourceVerdict[];
   output: {
