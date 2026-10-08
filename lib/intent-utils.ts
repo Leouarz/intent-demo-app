@@ -523,6 +523,7 @@ export type IntentQuote = {
     solver: string;
     solverUsd: string;
   };
+  quoteSignature: Hex;
   expiry: string;
   rff: IntentRff;
   rffHash: Hex;
@@ -578,6 +579,8 @@ export type IntentLifecycleStatus =
 export type IntentSubmitRequest = {
   provider: ProviderId;
   rff: IntentRff;
+  fees: IntentQuote["fees"];
+  quoteSignature: Hex;
   signatures: SubmittedSignature[];
   nativeTxReceipts?: Array<{ sourceIndex: number; txHash: Hex }>;
 };
@@ -1052,6 +1055,8 @@ export async function executeIntentQuote(
   const submitRequest: IntentSubmitRequest = {
     provider: quote.provider,
     rff: quote.rff,
+    fees: quote.fees,
+    quoteSignature: quote.quoteSignature,
     signatures,
     ...(nativeTxReceipts.length ? { nativeTxReceipts } : {}),
   };
