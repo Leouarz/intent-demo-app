@@ -18,7 +18,6 @@ import {
   buildIntentQuoteRequest,
   connectInjectedWallet,
   executeIntentQuote,
-  findInsufficientInputs,
   findRouteSelectionIssues,
   formatBalanceAmount,
   getChain,
@@ -291,11 +290,7 @@ export default function Page() {
       setRouteCatalog(null);
       setStructuredError(null);
       setRawVisible(false);
-      setWarnings(
-        balances
-          ? findInsufficientInputs(deployment, effectiveForm, balances)
-          : [],
-      );
+      setWarnings([]);
       setStatus("Requesting quote");
       const nextQuote = await requestIntentQuote(deployment, effectiveForm);
       setQuote(nextQuote);
