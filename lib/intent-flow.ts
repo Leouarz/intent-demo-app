@@ -23,11 +23,15 @@ import {
 export const MIDDLEWARE_URL =
   process.env.NEXT_PUBLIC_MIDDLEWARE_URL ?? "http://localhost:4050";
 
-export const INTENT_IDENTITY_HEADERS = {
-  "x-nexus-client-id": "leouarz-intent-demo-app",
+const apiKey = process.env.NEXT_PUBLIC_NEXUS_API_KEY;
+
+export const INTENT_IDENTITY_HEADERS: Record<string, string> = {
+  "x-nexus-client-id":
+    process.env.NEXT_PUBLIC_NEXUS_CLIENT_ID ?? "leouarz-intent-demo-app",
+  ...(apiKey ? { "x-nexus-api-key": apiKey } : {}),
   "x-nexus-surface": "nexus-app",
   "x-nexus-surface-version": "0.0.1",
-} as const;
+};
 
 type IntentCatalogChain = Omit<DeploymentChain, "chainId"> & {
   chainId: number | string;
